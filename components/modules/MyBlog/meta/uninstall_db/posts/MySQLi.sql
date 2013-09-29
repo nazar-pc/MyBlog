@@ -1,0 +1,1 @@
+DROP TABLE `[prefix]myblog_posts`;

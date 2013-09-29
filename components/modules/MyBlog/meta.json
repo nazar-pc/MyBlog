@@ -1,0 +1,19 @@
+{
+	"package"				: "MyBlog",
+	"category"				: "modules",
+	"version"				: "0.0.1",
+	"description"			: "Simple demo blog module",
+	"author"				: "Nazar Mokrynskyi",
+	"website"				: "cleverstyle.org/cms",
+	"license"				: "MIT License",
+	"db_support"			: [
+		"MySQLi"
+	],
+	"provide"				: "myblog",
+	"optional"				: [
+		"editor"
+	],
+	"languages"				: [
+		"Русский"
+	]
+}

@@ -1,0 +1,9 @@
+{
+	"list"	: [],
+	"post"	: [
+		"view",
+		"add",
+		"edit",
+		"delete"
+	]
+}

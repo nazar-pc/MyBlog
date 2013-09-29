@@ -4,6 +4,9 @@ IndexIgnore *.php *.pl *.cgi *.htaccess *.htpasswd
 RewriteEngine On
 RewriteBase /
 
+<Files build.php>
+	RewriteEngine Off
+</Files>
 <Files license.txt>
 	RewriteEngine Off
 </Files>
