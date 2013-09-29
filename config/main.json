@@ -1,0 +1,35 @@
+{
+//Domain of main mirror
+	"domain"			: "myblog.com",
+//Base timezone
+	"timezone"			: "Europe/Kiev",
+//Settings of main DB
+	"db_host"			: "localhost",
+	"db_type"			: "MySQLi",
+	"db_name"			: "myblog.com",
+	"db_user"			: "myblog.com",
+	"db_password"		: "1111",
+	"db_prefix"			: "d67ae_",
+	"db_charset"		: "utf8",
+//Settings of main Storage
+	"storage_type"		: "Local",
+	"storage_url"		: "",
+	"storage_host"		: "localhost",
+	"storage_user"		: "",
+	"storage_password"	: "",
+//Base language
+	"language"			: "Русский",
+//Cache engine
+	"cache_engine"		: "FileSystem",
+//Cache size in MB for FileSystem storage engine
+	"cache_size"		: "100",
+//Settings of Memcached cache engine
+	"memcache_host"		: "127.0.0.1",
+	"memcache_port"		: "11211",
+//Will be truncated to 56 symbols
+	"key"				: "0b46a3643990708b50c9ccc863c1d3826fe0234ccb99d37ac7c0865c",
+//Will be truncated to 8 symbols
+	"iv"				: "0019aecf",
+//Any length
+	"public_key"		: "5271a6517cb362a166f0f60a7a2e913548e573398e4f56241fd1978a17e976e426c2ecf3498ef6d714b3a774a45de87f43f6ff37c9b61f5430bd9d861b501625"
+}
