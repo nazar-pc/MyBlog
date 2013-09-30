@@ -13,12 +13,12 @@ use			cs\Index,
 			h;
 $Index				= Index::instance();
 if (!isset($Index->route_ids[0])) {
-	define('ERROR_CODE', 404);
+	error_code(404);
 	return;
 }
 $post				= Posts::instance()->get($Index->route_ids[0]);
 if (!$post) {
-	define('ERROR_CODE', 404);
+	error_code(404);
 	return;
 }
 $Index->title_auto	= false;

@@ -13,17 +13,17 @@ use			cs\Config,
 			h;
 $rc		= Config::instance()->route;
 if (!isset($rc[2])) {
-	define('ERROR_CODE', 404);
+	error_code(404);
 	return;
 }
 $post	= Posts::instance()->get($rc[2]);
 if (!$post) {
-	define('ERROR_CODE', 404);
+	error_code(404);
 	return;
 }
 $User	= User::instance();
 if ($post['user'] != $User->id && !$User->admin()) {
-	define('ERROR_CODE', 403);
+	error_code(403);
 	return;
 }
 if (Posts::instance()->del($post['id'])) {

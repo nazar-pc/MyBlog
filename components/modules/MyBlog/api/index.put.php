@@ -10,20 +10,20 @@ namespace	cs\modules\MyBlog;
 use			cs\Config,
 			cs\User;
 if (!isset($rc[0], $_POST['title'], $_POST['text'])) {
-	define('ERROR_CODE', 400);
+	error_code(400);
 	return;
 }
 $post	= Posts::instance()->get($rc[0]);
 if (!$post) {
-	define('ERROR_CODE', 404);
+	error_code(404);
 	return;
 }
 $User	= User::instance();
 if ($post['user'] != $User->id && !$User->admin()) {
-	define('ERROR_CODE', 403);
+	error_code(403);
 	return;
 }
 if (!Posts::instance()->set($post['id'], $_POST['title'], $_POST['text'])) {
-	define('ERROR_CODE', 500);
+	error_code(500);
 	return;
 }

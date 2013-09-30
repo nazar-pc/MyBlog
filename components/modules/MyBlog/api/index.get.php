@@ -24,7 +24,7 @@ if (!isset($rc[0])) {
 }
 $post	= Posts::instance()->get($rc[0]);
 if (!$post) {
-	define('ERROR_CODE', 404);
+	error_code(404);
 	return;
 }
 $Page->json($post);

@@ -9,7 +9,7 @@
 namespace	cs\modules\MyBlog;
 use			cs\Page;
 if (!isset($_POST['title'], $_POST['text'])) {
-	define('ERROR_CODE', 400);
+	error_code(400);
 	return;
 }
 if ($post = Posts::instance()->add($_POST['title'], $_POST['text'])) {
@@ -18,5 +18,5 @@ if ($post = Posts::instance()->add($_POST['title'], $_POST['text'])) {
 		'id'	=> $post
 	]);
 } else {
-	define('ERROR_CODE', 500);
+	error_code(500);
 }
