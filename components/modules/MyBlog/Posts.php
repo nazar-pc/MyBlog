@@ -12,6 +12,7 @@ use			cs\Config,
 			cs\DB\Accessor,
 			cs\Language,
 			cs\User,
+			cs\CRUD,
 			cs\Singleton;
 
 /**
@@ -19,8 +20,9 @@ use			cs\Config,
  *
  * @method static \cs\modules\MyBlog\Posts instance($check = false)
  */
-class Posts extends Accessor {
-	use Singleton;
+class Posts {
+	use	CRUD,
+		Singleton;
 
 	/**
 	 * Cache object instance
@@ -28,6 +30,16 @@ class Posts extends Accessor {
 	 * @var Prefix
 	 */
 	protected $cache;
+
+	protected $table		= '[prefix]myblog_posts';
+
+	protected $data_model	= [
+		'id'	=> 'int',
+		'user'	=> 'int',
+		'title'	=> 'text',
+		'text'	=> 'html',
+		'date'	=> 'int'
+	];
 
 	protected function construct () {
 		/**
@@ -62,18 +74,12 @@ class Posts extends Accessor {
 		 * Try to get item from cache, if not found - get it from database and save in cache
 		 */
 		return $this->cache->get("posts/$id", function () use ($id) {
-			if ($data = $this->db()->qf([	//Readable database, Query, Fetch
-				"SELECT
-					`id`,
-					`user`,
-					`title`,
-					`text`,
-					`date`
-				FROM `[prefix]myblog_posts`
-				WHERE `id` = '%d'
-				LIMIT 1",
-				$id
-			])) {
+			$data = $this->read(
+				$this->table,
+				$this->data_model,
+				[$id]
+			);
+			if ($data) {
 				$L					= Language::instance();
 				$data['datetime']	= $L->to_locale(date($L->_datetime_long, $data['date']));
 				$data['username']	= User::instance()->username($data['user']);
@@ -90,28 +96,17 @@ class Posts extends Accessor {
 	 * @return bool|int			Id of created post or <b>false</b> on failure
 	 */
 	function add ($title, $text) {
-		$user	= User::instance()->id;	//User id
-		$title	= xap($title);			//XSS filter
-		$text	= xap($text, true);		//XSS filter, allow html tags
-		$date	= TIME;					//Current timestamp
-		if ($this->db_prime()->q(		//Writable database, Query
-			"INSERT INTO `[prefix]myblog_posts`
-				(
-					`user`,
-					`title`,
-					`text`,
-					`date`
-				) VALUES (
-					'%d',
-					'%s',
-					'%s',
-					'%d'
-				)",
-			$user,
-			$title,
-			$text,
-			$date
-		)) {
+		$id	= $this->create(
+			$this->table,
+			$this->data_model,
+			[
+				User::instance()->id,
+				$title,
+				$text,
+				TIME
+			]
+		);
+		if ($id) {
 			/**
 			 * Delete total count of posts
 			 */
@@ -130,20 +125,10 @@ class Posts extends Accessor {
 	 * @return bool
 	 */
 	function set ($id, $title, $text) {
-		$id		= (int)$id;
-		$title	= xap($title);			//XSS filter
-		$text	= xap($text, true);		//XSS filter, allow html tags
-		if ($this->db_prime()->q(		//Writable database, Query
-			"UPDATE `[prefix]myblog_posts`
-			SET
-				`title`	= '%s',
-				`text`	= '%s'
-			WHERE `id` = '%d'
-			LIMIT 1",
-			$title,
-			$text,
-			$id
-		)) {
+		$data			= $this->get($id);
+		$data['title']	= $title;
+		$data['text']	= $text;
+		if ($this->update($this->table, $this->data_model, $data)) {
 			/**
 			 * Delete cached item if any
 			 */
@@ -160,12 +145,7 @@ class Posts extends Accessor {
 	 * @return bool
 	 */
 	function del ($id) {
-		$id	= (int)$id;
-		if ($this->db_prime()->q(
-			"DELETE FROM `[prefix]myblog_posts`
-			WHERE `id` = '%d'
-			LIMIT 1"
-		)) {
+		if ($this->delete($this->table, $this->data_model, [$id])) {
 			/**
 			 * Delete cached item if any, and total count of posts
 			 */
