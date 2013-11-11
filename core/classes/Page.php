@@ -13,8 +13,8 @@ use			h;
  *  System/Page/get_header_info
  *  System/Page/rebuild_cache
  *  ['key'	=> &$key]		//Reference to the key, that will be appended to all css and js files, can be changed to reflect JavaScript and CSS changes
- *  System/Page/external_login_list
- *  ['list'	=> &$list]		//Reference to the list of external login systems
+ *  System/Page/external_sign_in_list
+ *  ['list'	=> &$list]		//Reference to the list of external sign in systems
  *
  * @method static \cs\Page instance($check = false)
  */
@@ -43,21 +43,21 @@ class Page {
 				$post_Body			= '',
 				$post_Html			= '',
 				$level				= [				//Number of tabs by default for margins the substitution
-					'Head'				=> 0,	//of values into template
-					'pre_Body'			=> 0,
-					'Header'			=> 2,
-					'main_menu'			=> 2,
-					'main_sub_menu'		=> 2,
-					'main_menu_more'	=> 2,
-					'header_info'		=> 3,
-					'debug_info'		=> 1,
-					'Left'				=> 2,
-					'Top'				=> 2,
-					'Content'			=> 3,
-					'Bottom'			=> 2,
-					'Right'				=> 2,
-					'Footer'			=> 1,
-					'post_Body'			=> 0
+					'Head'				=> 0,		//of values into template
+					'pre_Body'			=> 1,
+					'Header'			=> 3,
+					'main_menu'			=> 3,
+					'main_sub_menu'		=> 3,
+					'main_menu_more'	=> 3,
+					'header_info'		=> 4,
+					'debug_info'		=> 2,
+					'Left'				=> 3,
+					'Top'				=> 3,
+					'Content'			=> 4,
+					'Bottom'			=> 3,
+					'Right'				=> 3,
+					'Footer'			=> 2,
+					'post_Body'			=> 1
 				],
 				$user_avatar_image,
 				$header_info,
@@ -157,37 +157,23 @@ class Page {
 		 * Theme detection
 		 */
 		if (is_object($Config)) {
-			$this->theme		= in_array($this->theme, $Config->core['active_themes']) ? $this->theme : $Config->core['theme'];
-			if ($Config->core['allow_change_theme']) {
-				$theme				= _getcookie('theme');
-				if ($theme && $theme !== $this->theme && in_array($theme, $Config->core['active_themes'])) {
-					$this->theme = $theme;
-				}
-				unset($theme);
-			}
+			$this->theme		= in_array($this->theme, $Config->core['themes']) ? $this->theme : $Config->core['theme'];
 			$this->color_scheme	= in_array($this->color_scheme, $Config->core['color_schemes'][$this->theme]) ?
 									$this->color_scheme : $Config->core['color_schemes'][$this->theme][0];
-			if ($Config->core['allow_change_theme']) {
-				$color_scheme		= _getcookie('color_scheme');
-				if ($color_scheme && $color_scheme !== $this->color_scheme && in_array($color_scheme, $Config->core['color_schemes'][$this->theme])) {
-					$this->color_scheme = $color_scheme;
-				}
-				unset($color_scheme);
-			}
 		}
 		/**
 		 * Base name for cache files
 		 */
-		$this->pcache_basename	= '_'.$this->theme.'_'.$this->color_scheme.'_'.Language::instance()->clang.'.';
+		$this->pcache_basename	= "_{$this->theme}_{$this->color_scheme}_".Language::instance()->clang.'.';
 		/**
 		 * Template loading
 		 */
 		if ($this->interface) {
-			_include_once(THEMES.'/'.$this->theme.'/prepare.php', false);
+			_include_once(THEMES."/$this->theme/prepare.php", false);
 			ob_start();
 			if (
 				!(
-					file_exists(THEMES.'/'.$this->theme.'/index.html') || file_exists(THEMES.'/'.$this->theme.'/index.php')
+					file_exists(THEMES."/$this->theme/index.html") || file_exists(THEMES."/$this->theme/index.php")
 				) ||
 				(
 					!(
@@ -196,7 +182,7 @@ class Page {
 					!User::instance(true)->admin() &&
 					code_header(503) &&
 					!(
-						_include_once(THEMES.'/'.$this->theme.'/closed.php', false) || _include_once(THEMES.'/'.$this->theme.'/closed.html', false)
+						_include_once(THEMES."/$this->theme/closed.php", false) || _include_once(THEMES."/$this->theme/closed.html", false)
 					)
 				)
 			) {
@@ -204,7 +190,7 @@ class Page {
 				h::title(get_core_ml_text('closed_title')).
 				get_core_ml_text('closed_text');
 			} else {
-				_include_once(THEMES.'/'.$this->theme.'/index.php', false) || _include_once(THEMES.'/'.$this->theme.'/index.html');
+				_include_once(THEMES."/$this->theme/index.php", false) || _include_once(THEMES."/$this->theme/index.html");
 			}
 			$this->Html = ob_get_clean();
 		}
@@ -329,28 +315,29 @@ class Page {
 		 * Menu generation
 		 */
 		$Index				= Index::instance();
-		if ($Index->main_menu) {
+		if (!$this->main_menu && $Index->main_menu) {
 			$this->main_menu	= h::{'li| a'}($Index->main_menu);
 		}
 		if ($Index->main_sub_menu) {
-			$this->main_sub_menu	= '';
-			foreach ($Index->main_sub_menu as $item) {
-				if (isset($item[1], $item[1]['class']) && $item[1]['class'] == 'uk-active') {
-					if ($Index->main_menu_more) {
-						$item[0]				.= ' '.h::icon('caret-down');
+			if (!$this->main_sub_menu) {
+				foreach ($Index->main_sub_menu as $item) {
+					if (isset($item[1], $item[1]['class']) && $item[1]['class'] == 'uk-active') {
+						if ($Index->main_menu_more) {
+							$item[0]				.= ' '.h::icon('caret-down');
+						}
+						$item[1]['class']		= trim(str_replace('uk-active', '', $item[1]['class']));
+						$this->main_sub_menu	.= h::{'li.uk-active[data-uk-dropdown=]'}(
+							h::a($item).
+							(
+								$Index->main_menu_more ? h::{'div.uk-dropdown.uk-dropdown-small ul.uk-nav.uk-nav-dropdown li| a'}($Index->main_menu_more) : ''
+							)
+						);
+					} else {
+						$this->main_sub_menu	.= h::{'li a'}($item);
 					}
-					$item[1]['class']		= trim(str_replace('uk-active', '', $item[1]['class']));
-					$this->main_sub_menu	.= h::{'li.uk-active[data-uk-dropdown=]'}(
-						h::a($item).
-						(
-							$Index->main_menu_more ? h::{'div.uk-dropdown.uk-dropdown-small ul.uk-nav.uk-nav-dropdown li| a'}($Index->main_menu_more) : ''
-						)
-					);
-				} else {
-					$this->main_sub_menu	.= h::{'li a'}($item);
 				}
 			}
-		} elseif ($Index->main_menu_more) {
+		} elseif (!$this->main_menu && $Index->main_menu_more) {
 			$this->main_menu	= h::{'li| a'}($Index->main_menu_more);
 		}
 		/**
@@ -905,7 +892,7 @@ class Page {
 				}
 			}
 			if ($extension == 'js') {
-				$temp_cache	= "window.cs.Language=".Language::instance()->get_json().";$temp_cache";
+				$temp_cache	= "window.cs.Language="._json_encode(Language::instance()).";$temp_cache";
 			}
 			file_put_contents(PCACHE."/$this->pcache_basename$extension", gzencode($temp_cache, 9), LOCK_EX | FILE_BINARY);
 			$key .= md5($temp_cache);
@@ -936,7 +923,7 @@ class Page {
 		 * Includes processing
 		 */
 		$data	= preg_replace_callback(
-			'/(url\((.*?)\))|(@import[\s\t\n\r]{0,1}[\'"](.*?)[\'"])/',
+			'/(url\((.*?)\))|(@import[\s\t\n\r]*[\'"](.*?)[\'"])/',
 			function ($match) use (&$data) {
 				$link		= trim($match[count($match) - 1], '\'" ');
 				if (
@@ -1088,20 +1075,33 @@ class Page {
 		return $this;
 	}
 	/**
-	 * Display notice
+	 * Display success message
+	 *
+	 * @param string $success_text
+	 *
+	 * @return Page
+	 */
+	function success ($success_text) {
+		$this->Top .= h::{'div.uk-alert.uk-alert-success.uk-lead.cs-center'}(
+			$success_text
+		);
+		return $this;
+	}
+	/**
+	 * Display notice message
 	 *
 	 * @param string $notice_text
 	 *
 	 * @return Page
 	 */
 	function notice ($notice_text) {
-		$this->Top .= h::{'div.uk-alert.uk-alert-success.uk-lead.cs-center'}(
+		$this->Top .= h::{'div.uk-alert.uk-alert-warning.uk-lead.cs-center'}(
 			$notice_text
 		);
 		return $this;
 	}
 	/**
-	 * Display warning
+	 * Display warning message
 	 *
 	 * @param string $warning_text
 	 *
@@ -1128,7 +1128,7 @@ class Page {
 		if (!defined('ERROR_CODE')) {
 			error_code(500);
 		}
-		if (!API && ERROR_CODE == 403 && _getcookie('logout')) {
+		if (!API && ERROR_CODE == 403 && _getcookie('sign_out')) {
 			header('Location: '.Config::instance()->base_url(), true, 302);
 			$this->Content	= '';
 			exit;
@@ -1157,26 +1157,28 @@ class Page {
 			}
 			$this->Content	= ob_get_clean();
 		}
+		Page::instance()->__finish();
+		User::instance(true)->__finish();
 		exit;
 	}
 	/**
-	 * Substitutes header information about user, login/registration forms, etc.
+	 * Substitutes header information about user, sign in/sign up forms, etc.
 	 *
 	 * @return Page
 	 */
 	protected function get_header_info () {
-		$L		= Language::instance();
-		$User	= User::instance(true);
-		$this->user_avatar_image = $User->avatar();
+		$L							= Language::instance();
+		$User						= User::instance(true);
+		$this->user_avatar_image	= $User->avatar();
 		if ($User->user()) {
 			$this->header_info = h::{'div.cs-header-user-block'}(
 				h::b(
 					"$L->hello, ".$User->username().'! '.
-					h::{'icon.cs-header-logout-process'}(
+					h::{'icon.cs-header-sign-out-process'}(
 						'power-off',
 						[
 							'style'			=> 'cursor: pointer;',
-							'data-title'	=> $L->log_out
+							'data-title'	=> $L->sign_out
 						]
 					)
 				).
@@ -1201,7 +1203,7 @@ class Page {
 		} else {
 			$external_systems_list		= '';
 			Trigger::instance()->run(
-				'System/Page/external_login_list',
+				'System/Page/external_sign_in_list',
 				[
 					'list'	=> &$external_systems_list
 				]
@@ -1209,11 +1211,9 @@ class Page {
 			$this->header_info			= h::{'div.cs-header-guest-form'}(
 				h::b("$L->hello, $L->guest!").
 				h::div(
-					h::{'button.cs-header-login-slide.cs-button-compact'}(
-						h::icon('signin').$L->log_in
-					).
-					h::{'button.cs-header-registration-slide.cs-button-compact'}(
-						h::icon('pencil').$L->registration,
+					h::{'button.cs-header-sign-in-slide.cs-button-compact.uk-icon-signin'}($L->sign_in).
+					h::{'button.cs-header-registration-slide.cs-button-compact.uk-icon-pencil'}(
+						$L->sign_up,
 						[
 							'data-title'	=> $L->quick_registration_form
 						]
@@ -1227,9 +1227,7 @@ class Page {
 					'autocorrect'		=> 'off'
 				]).
 				h::br().
-				h::{'button.cs-header-restore-password-process.cs-button-compact[tabindex=2]'}(
-					h::icon('question').$L->restore_password
-				).
+				h::{'button.cs-header-restore-password-process.cs-button-compact.uk-icon-question[tabindex=2]'}($L->restore_password).
 				h::{'button.cs-button-compact.cs-header-back[tabindex=3]'}(
 					h::icon('chevron-down'),
 					[
@@ -1247,9 +1245,7 @@ class Page {
 					'autocorrect'		=> 'off'
 				]).
 				h::br().
-				h::{'button.cs-header-registration-process.cs-button-compact[tabindex=2]'}(
-					h::icon('pencil').$L->registration
-				).
+				h::{'button.cs-header-registration-process.cs-button-compact.uk-icon-pencil[tabindex=2]'}($L->sign_up).
 				h::{'button.cs-button-compact.cs-header-back[tabindex=4]'}(
 					h::icon('chevron-down'),
 					[
@@ -1260,8 +1256,8 @@ class Page {
 					'style'	=> 'display: none;'
 				]
 			).
-			h::{'div.cs-header-login-form'}(
-				h::{'input.cs-no-ui.cs-header-login-email[tabindex=1]'}([
+			h::{'div.cs-header-sign-in-form'}(
+				h::{'input.cs-no-ui.cs-header-sign-in-email[tabindex=1]'}([
 					'placeholder'		=> $L->login_or_email,
 					'autocapitalize'	=> 'off',
 					'autocorrect'		=> 'off'
@@ -1270,7 +1266,7 @@ class Page {
 					'placeholder'	=> $L->password
 				]).
 				h::br().
-				h::{'button.cs-header-login-process.cs-button-compact[tabindex=3]'}(h::icon('signin').$L->log_in).
+				h::{'button.cs-header-sign-in-process.cs-button-compact.uk-icon-signin[tabindex=3]'}($L->sign_in).
 				h::{'button.cs-button-compact.cs-header-back[tabindex=5]'}(
 					h::icon('chevron-down'),
 					[
@@ -1308,7 +1304,7 @@ class Page {
 			/**
 			 * Processing of replacing in content
 			 */
-			echo $this->process_replacing($this->Content);
+			echo $this->process_replacing($this->Content ?: (API ? 'null' : ''));
 		} else {
 			Trigger::instance()->run('System/Page/pre_display');
 			class_exists('\\cs\\Error', false) && Error::instance(true)->display();

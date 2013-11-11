@@ -12,10 +12,10 @@ $Config	= Config::instance();
 $L		= Language::instance();
 $Page	= Page::instance();
 $User	= User::instance();
-if (isset($_COOKIE['reg_confirm'])) {
+if (_getcookie('reg_confirm')) {
 	_setcookie('reg_confirm', '');
 	$Page->title($L->reg_success_title);
-	$Page->notice($L->reg_success);
+	$Page->success($L->reg_success);
 	return;
 } elseif (!$User->guest()) {
 	$Page->title($L->you_are_already_registered_title);

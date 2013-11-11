@@ -61,14 +61,16 @@
           append: "\n"
         });
       }, function() {
+        return $('.SIMPLEST_INLINE_EDITOR').prop('contenteditable', true);
+      }, function() {
         return $('.cs-info').cs().tooltip();
       }, function() {
         return $('.cs-tabs').cs().tabs();
       }, function() {
-        $('.cs-header-login-slide').click(function() {
+        $('.cs-header-sign-in-slide').click(function() {
           $('.cs-header-guest-form').hide('medium');
-          $('.cs-header-login-form').show('medium');
-          return $('.cs-header-login-email').focus();
+          $('.cs-header-sign-in-form').show('medium');
+          return $('.cs-header-sign-in-email').focus();
         });
         $('.cs-header-registration-slide').click(function() {
           $('.cs-header-guest-form').hide('medium');
@@ -76,13 +78,13 @@
           return $('.cs-header-registration-email').focus();
         });
         $('.cs-header-restore-password-slide').click(function() {
-          $('.cs-header-login-form, .cs-header-registration-form').hide('medium');
+          $('.cs-header-sign-in-form, .cs-header-registration-form').hide('medium');
           $('.cs-header-restore-password-form').show('medium');
           return $('.cs-header-restore-password-email').focus();
         });
-        $('.cs-header-login-email, .cs-header-user-password').keyup(function(event) {
+        $('.cs-header-sign-in-email, .cs-header-user-password').keyup(function(event) {
           if (event.which === 13) {
-            return $('.cs-header-login-process').click();
+            return $('.cs-header-sign-in-process').click();
           }
         });
         $('.cs-header-registration-email').keyup(function(event) {
@@ -90,11 +92,11 @@
             return $('.cs-header-registration-process').click();
           }
         });
-        $('.cs-header-login-process').click(function() {
-          return cs.login($('.cs-header-login-email').val(), $('.cs-header-user-password').val());
+        $('.cs-header-sign-in-process').click(function() {
+          return cs.sign_in($('.cs-header-sign-in-email').val(), $('.cs-header-user-password').val());
         });
-        $('.cs-header-logout-process').click(function() {
-          return cs.logout();
+        $('.cs-header-sign-out-process').click(function() {
+          return cs.sign_out();
         });
         $('.cs-show-password').click(function() {
           var $this, pass_input;
@@ -155,7 +157,7 @@
         });
         return $('.cs-header-back').click(function() {
           $('.cs-header-guest-form').show('medium');
-          return $('.cs-header-registration-form, .cs-header-login-form, .cs-header-restore-password-form').hide('medium');
+          return $('.cs-header-registration-form, .cs-header-sign-in-form, .cs-header-restore-password-form').hide('medium');
         });
       }, function() {
         if (cs.in_admin) {
@@ -164,9 +166,6 @@
           });
           $('#change_theme, #change_color_scheme, #change_language').click(function() {
             return $('#apply_settings').click();
-          });
-          $('#change_active_themes').change(function() {
-            return $(this).find("option[value='" + $('#change_theme').val() + "']").prop('selected', true);
           });
           $('#change_active_languages').change(function() {
             return $(this).find("option[value='" + $('#change_language').val() + "']").prop('selected', true);

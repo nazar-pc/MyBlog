@@ -191,7 +191,7 @@
 
 
   cs.json_encode = function(obj) {
-    return $.toJSON(obj);
+    return JSON.stringify(obj);
   };
 
   /**
@@ -203,7 +203,7 @@
 
 
   cs.json_decode = function(str) {
-    return $.secureEvalJSON(str);
+    return JSON.parse(str);
   };
 
   /**
@@ -249,16 +249,19 @@
   cs.setcookie = function(name, value, expires) {
     var date;
     name = cs.cookie_prefix + name;
+    if (!value) {
+      return $.removeCookie(name);
+    }
     if (expires) {
       date = new Date();
       date.setTime(expires * 1000);
       expires = date;
     }
-    return !!$.cookie(name, value({
+    return !!$.cookie(name, value, {
       path: cs.cookie_path,
       domain: cs.cookie_domain,
       secure: cs.protocol === 'https'
-    }));
+    });
   };
 
   /**
@@ -276,16 +279,18 @@
   };
 
   /**
-   * Login into system
+   * Sign in into system
    *
    * @param {string} login
    * @param {string} password
   */
 
 
-  cs.login = function(login, password) {
-    login = login.toLowerCase();
-    return $.ajax(cs.base_url + '/api/System/user/login', {
+  cs.sign_in = function(login, password) {
+    login = String(login).toLowerCase();
+    password = String(password);
+    return $.ajax({
+      url: 'api/System/user/sign_in',
       cache: false,
       data: {
         login: cs.hash('sha224', login)
@@ -293,7 +298,7 @@
       type: 'post',
       success: function(random_hash) {
         if (random_hash.length === 56) {
-          return $.ajax(cs.base_url + '/api/user/login', {
+          return $.ajax('api/user/sign_in', {
             cache: false,
             data: {
               login: cs.hash('sha224', login),
@@ -328,15 +333,16 @@
   };
 
   /**
-   * Logout
+   * Sign out
   */
 
 
-  cs.logout = function() {
-    return $.ajax(cs.base_url + '/api/System/user/logout', {
+  cs.sign_out = function() {
+    return $.ajax({
+      url: 'api/System/user/sign_out',
       cache: false,
       data: {
-        logout: true
+        sign_out: true
       },
       type: 'post',
       success: function() {
@@ -364,8 +370,9 @@
       alert(L.please_type_your_email);
       return;
     }
-    email = email.toLowerCase();
-    return $.ajax(cs.base_url + '/api/System/user/registration', {
+    email = String(email).toLowerCase();
+    return $.ajax({
+      url: 'api/System/user/registration',
       cache: false,
       data: {
         email: email
@@ -404,8 +411,9 @@
       alert(L.please_type_your_email);
       return;
     }
-    email = email.toLowerCase();
-    return $.ajax(cs.base_url + '/api/System/user/restore_password', {
+    email = String(email).toLowerCase();
+    return $.ajax({
+      url: 'api/System/user/restore_password',
       cache: false,
       data: {
         email: cs.hash('sha224', email)
@@ -447,9 +455,10 @@
       alert(L.current_new_password_equal);
       return;
     }
-    current_password = cs.hash('sha512', cs.hash('sha512', current_password) + cs.public_key);
-    new_password = cs.hash('sha512', cs.hash('sha512', new_password) + cs.public_key);
-    return $.ajax(cs.base_url + '/api/System/user/change_password', {
+    current_password = cs.hash('sha512', cs.hash('sha512', String(current_password)) + cs.public_key);
+    new_password = cs.hash('sha512', cs.hash('sha512', String(new_password)) + cs.public_key);
+    return $.ajax({
+      url: 'api/System/user/change_password',
       cache: false,
       data: {
         verify_hash: cs.hash('sha224', current_password + session_id),

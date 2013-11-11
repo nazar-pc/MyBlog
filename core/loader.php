@@ -7,9 +7,9 @@
  */
 namespace	cs;
 require			CORE.'/upf.php';					//Inclusion of Useful PHP Functions
-require			CORE.'/functions.php';				//Inclusion of general system functions
 require_once	CORE.'/vendor/autoload.php';		//Inclusion of composer's autoloader.php with system dependencies
 _require_once(DIR.'/vendor/autoload.php', false);	//Inclusion of composer's autoloader.php with user's dependencies
+require			CORE.'/functions.php';				//Inclusion of general system functions and system autoloader
 
 error_reporting(E_ALL);
 
@@ -92,10 +92,6 @@ define('PCACHE',	DIR.'/storage/pcache');
  * Themes dir
  */
 define('THEMES',	DIR.'/themes');
-/**
- * Load information about minimal needed Software versions
- */
-require_once CORE.'/required_verions.php';
 /**
  * Including of custom user file
  */

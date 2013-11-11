@@ -184,6 +184,7 @@ if (
 					'storage'	=> []
 				];
 				unset($tmp_file, $module);
+				ksort($Config->components['modules'], SORT_STRING | SORT_FLAG_CASE);
 				$Config->save();
 			} elseif ($rc[3] == 'upload') {
 				break;
@@ -210,7 +211,7 @@ if (
 			if (file_exists(MODULES."/$rc[3]/meta.json")) {
 				$meta	= _json_decode(file_get_contents(MODULES."/$rc[3]/meta.json"));
 				if (isset($meta['optional'])) {
-					$Page->notice(
+					$Page->success(
 						$L->for_complete_feature_set(
 							implode(', ', (array)$meta['optional'])
 						)
@@ -310,7 +311,7 @@ if (
 				$tmp_file = TEMP.'/'.md5($_FILES['upload_system']['tmp_name'].MICROTIME).'.phar.php'
 			);
 			$tmp_dir								= "phar://$tmp_file";
-			if (!file_exists("$tmp_dir/version") || !file_exists($tmp_dir.'/themes.json')) {
+			if (!file_exists("$tmp_dir/version") || !file_exists("$tmp_dir/themes.json")) {
 				$Page->warning($L->this_is_not_system_installer_file);
 				unlink($tmp_file);
 				break;

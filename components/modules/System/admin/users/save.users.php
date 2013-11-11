@@ -21,7 +21,7 @@ switch ($_POST['mode']) {
 		if ($_POST['email']) {
 			$result = $User->registration($_POST['email'], false, false);
 			if ($Index->save(is_array($result))) {
-				$Page->notice($L->user_was_added($User->get('login', $result['id']), $result['password']));
+				$Page->success($L->user_was_added($User->get('login', $result['id']), $result['password']));
 			} else {
 				$Page->warning($L->user_alredy_exists);
 			}
@@ -35,9 +35,9 @@ switch ($_POST['mode']) {
 	case 'edit_raw':
 		$id = (int)$_POST['user']['id'];
 		if (
-			$id != 1 &&
-			$id != 2 &&
-			!in_array(3, (array)$User->get_user_groups($id))
+			$id != User::GUEST_ID &&
+			$id != User::ROOT_ID &&
+			!in_array(User::BOT_GROUP_ID, (array)$User->get_groups($id))
 		) {
 			$User->set($_POST['user'], null, $id);
 			$User->__finish();
@@ -47,7 +47,7 @@ switch ($_POST['mode']) {
 	case 'edit':
 		if (isset($_POST['user'])) {
 			$id			= (int)$_POST['user']['id'];
-			if ($id == 1 || $id == 2) {
+			if ($id == User::GUEST_ID || $id == User::ROOT_ID) {
 				break;
 			}
 			$user_data	= &$_POST['user'];
@@ -58,16 +58,10 @@ switch ($_POST['mode']) {
 				'password',
 				'email',
 				'language',
-				'theme',
 				'timezone',
 				'status',
 				'block_until',
-				'gender',
-				'birthday',
-				'avatar',
-				'website',
-				'skype',
-				'about'
+				'avatar'
 			);
 			foreach ($user_data as $item => &$value) {
 				if (in_array($item, $columns) && $item != 'data') {
@@ -91,21 +85,6 @@ switch ($_POST['mode']) {
 					$block_until[0][0]
 				);
 				unset($block_until);
-			} else {
-				$user_data['block_until']	= 0;
-			}
-			if ($_POST['user']['birthday'] < TIME) {
-				$birthday				= $user_data['birthday'];
-				$birthday				= explode('-', $birthday);
-				$user_data['birthday']	= mktime(
-					0,
-					0,
-					0,
-					$birthday[1],
-					$birthday[2],
-					$birthday[0]
-				);
-				unset($birthday);
 			} else {
 				$user_data['block_until']	= 0;
 			}
@@ -153,41 +132,35 @@ switch ($_POST['mode']) {
 	break;
 	case 'deactivate':
 		if (isset($_POST['id'])) {
-			if ($_POST['id'] == 1 || $_POST['id'] == 2) {
-				break;
-			}
 			$id = (int)$_POST['id'];
-			if ($id != 1 && $id != 2) {
-				$User->set('status', 0, $id);
+			if ($id != User::GUEST_ID && $id != User::ROOT_ID) {
+				$User->set('status', User::STATUS_INACTIVE, $id);
 				$Index->save(true);
 			}
 		}
 	break;
 	case 'activate':
 		if (isset($_POST['id'])) {
-			if ($_POST['id'] == 1 || $_POST['id'] == 2) {
-				break;
-			}
 			$id = (int)$_POST['id'];
-			if ($id != 1 && $id != 2) {
-				$User->set('status', 1, $id);
+			if ($id != User::GUEST_ID && $id != User::ROOT_ID) {
+				$User->set('status', User::STATUS_ACTIVE, $id);
 				$Index->save(true);
 			}
 		}
 	break;
 	case 'permissions':
 		if (isset($_POST['id'], $_POST['permission'])) {
-			if ($_POST['id'] == 2) {
+			if ($_POST['id'] == User::ROOT_ID) {
 				break;
 			}
 			$Index->save(
-				$User->set_user_permissions($_POST['permission'], $_POST['id'])
+				$User->set_permissions($_POST['permission'], $_POST['id'])
 			);
 		}
 	break;
 	case 'groups':
 		if (isset($_POST['user'], $_POST['user']['id'], $_POST['user']['groups']) && $_POST['user']['groups']) {
-			if ($_POST['user']['id'] == 2 || in_array(3, (array)$User->get_user_groups($_POST['user']['id']))) {
+			if ($_POST['user']['id'] == User::ROOT_ID || in_array(User::BOT_GROUP_ID, (array)$User->get_groups($_POST['user']['id']))) {
 				break;
 			}
 			$_POST['user']['groups'] = _json_decode($_POST['user']['groups']);
@@ -196,7 +169,7 @@ switch ($_POST['mode']) {
 			}
 			unset($group);
 			$Index->save(
-				$User->set_user_groups($_POST['user']['groups'], $_POST['user']['id'])
+				$User->set_groups($_POST['user']['groups'], $_POST['user']['id'])
 			);
 		}
 	break;

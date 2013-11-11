@@ -6,7 +6,7 @@
  * @license		MIT License, see license.txt
  */
 /**
- * Provides next triggers:<br>
+ * Provides next triggers:
  *  System/User/construct/before
  *
  *  System/User/construct/after
@@ -23,23 +23,14 @@
  *  System/User/registration/confirmation/after
  *  ['id'	=> <i>user_id</i>]
  *
- *  System/User/del_user/before
+ *  System/User/del/before
  *  ['id'	=> <i>user_id</i>]
  *
- *  System/User/del_user/after
+ *  System/User/del/after
  *  ['id'	=> <i>user_id</i>]
  *
  *  System/User/add_bot
  *  ['id'	=> <i>bot_id</i>]
- *
- *  System/User/add_group
- *  ['id'	=> <i>group_id</i>]
- *
- *  System/User/del_group/before
- *  ['id'	=> <i>group_id</i>]
- *
- *  System/User/del_group/after
- *  ['id'	=> <i>group_id</i>]
  *
  *  System/User/get_contacts
  *  [
@@ -55,10 +46,12 @@
  *  ['id'	=> <i>user_id</i>]
  */
 namespace	cs;
-use			cs\DB\Accessor,
+use			cs\Cache\Prefix,
+			cs\DB\Accessor,
+			cs\Permission\Any,
 			h;
 /**
- * Class for users/groups/permissions manipulating
+ * Class for users manipulating
  *
  * @property	int		$id
  * @property	string	$login
@@ -68,22 +61,16 @@ use			cs\DB\Accessor,
  * @property	string	$email
  * @property	string	$email_hash		sha224 hash
  * @property	string	$language
- * @property	string	$theme
  * @property	string	$timezone
  * @property	int		$reg_date		unix timestamp
  * @property	string	$reg_ip			hex value, obtained by function ip2hex()
  * @property	string	$reg_key		random md5 hash, generated during registration
  * @property	int		$status			'-1' - not activated (for example after registration), 0 - inactive, 1 - active
  * @property	int		$block_until	unix timestamp
- * @property	int		$last_login		unix timestamp
+ * @property	int		$last_sign_in		unix timestamp
  * @property	string	$last_ip		hex value, obtained by function ip2hex()
  * @property	int		$last_online	unix timestamp
- * @property	int		$gender			0 - male, 1 - female, -1 - undefined
- * @property	int		$birthday		unix timestamp
  * @property	string	$avatar
- * @property	string	$website
- * @property	string	$skype
- * @property	string	$about
  * @property	string	$user_agent
  * @property	string	$ip
  * @property	string	$forwarded_for
@@ -91,8 +78,42 @@ use			cs\DB\Accessor,
  *
  * @method static \cs\User instance($check = false)
  */
-class User extends Accessor {
-	use	Singleton;
+class User {
+	use	Accessor,
+		Singleton,
+		Any;
+	/**
+	 * Id of system guest user
+	 */
+	const		GUEST_ID				= 1;
+	/**
+	 * Id of first, primary system administrator
+	 */
+	const		ROOT_ID					= 2;
+	/**
+	 * Id of system group for administrators
+	 */
+	const		ADMIN_GROUP_ID			= 1;
+	/**
+	 * Id of system group for users
+	 */
+	const		USER_GROUP_ID			= 2;
+	/**
+	 * Id of system group for bots
+	 */
+	const		BOT_GROUP_ID			= 3;
+	/**
+	 * Status of active user
+	 */
+	const		STATUS_ACTIVE			= 1;
+	/**
+	 * Status of inactive user
+	 */
+	const		STATUS_INACTIVE			= 0;
+	/**
+	 * Status of not activated user
+	 */
+	const		STATUS_NOT_ACTIVATED	= -1;
 
 	protected	$current				= [
 					'session'		=> false,
@@ -108,31 +129,42 @@ class User extends Accessor {
 				$update_cache			= [],		//Do we need to update users cache
 				$data					= [],		//Local cache of users data
 				$data_set				= [],		//Changed users data, at the finish, data in db must be replaced by this data
-				$cache					= [],		//Cache with some temporary data
 				$init					= false,	//Current state of initialization
 				$reg_id					= 0,		//User id after registration
 				$users_columns			= [],		//Copy of columns list of users table for internal needs without Cache usage
-				$permissions_table		= [];		//Array of all permissions for quick selecting
+				$permissions			= [];		//Permissions cache
+	/**
+	 * @var Prefix
+	 */
+	protected	$cache;
+	/**
+	 * Returns database index
+	 *
+	 * @return int
+	 */
+	protected function cdb () {
+		return Config::instance()->module('System')->db('users');
+	}
 	/**
 	 * Defining user id, type, session, personal settings
 	 */
 	function construct () {
-		$Cache		= Cache::instance();
-		$Config		= Config::instance();
+		$Cache	= $this->cache	= new Prefix('users');
+		$Config	= Config::instance();
 		Trigger::instance()->run('System/User/construct/before');
-		$this->users_columns = $Cache->get('users/columns', function () {
+		$this->users_columns = $Cache->get('columns', function () {
 			return $this->db()->columns('[prefix]users');
 		});
 		/**
 		 * Detecting of current user
 		 * Last part in page path - key
 		 */
-		$rc			= $Config->route;
+		$rc	= $Config->route;
 		if (
 			$this->user_agent == 'CleverStyle CMS' &&
 			(
-				($this->login_attempts(hash('sha224', 0)) < $Config->core['login_attempts_block_count']) ||
-				$Config->core['login_attempts_block_count'] == 0
+				($this->get_sign_in_attempts_count(hash('sha224', 0)) < $Config->core['sign_in_attempts_block_count']) ||
+				$Config->core['sign_in_attempts_block_count'] == 0
 			) &&
 			count($rc) > 1 &&
 			(
@@ -155,7 +187,7 @@ class User extends Accessor {
 				/**
 				 * Simulate a bad sign in to block access
 				 */
-				$this->login_result(false, hash('sha224', 'system'));
+				$this->sign_in_result(false, hash('sha224', 'system'));
 				unset($_POST['data']);
 				sleep(1);
 			}
@@ -167,14 +199,14 @@ class User extends Accessor {
 		if (_getcookie('session')) {
 			$this->id = $this->get_session_user();
 		/**
-		 * Try to detect bot
+		 * Try to detect bot, not necessary for API request
 		 */
-		} else {
+		} elseif (!API) {
 			/**
 			 * Loading bots list
 			 */
-			$bots = $Cache->get('users/bots', function () {
-				return $this->db()->qfa(
+			$bots = $Cache->get('bots', function () {
+				return $this->db()->qfa([
 					"SELECT
 						`u`.`id`,
 						`u`.`login`,
@@ -183,9 +215,11 @@ class User extends Accessor {
 						INNER JOIN `[prefix]users_groups` AS `g`
 					ON `u`.`id` = `g`.`id`
 					WHERE
-						`g`.`group`		= 3 AND
-						`u`.`status`	= 1"
-				) ?: [];
+						`g`.`group`		= '%s' AND
+						`u`.`status`	= '%s'",
+					self::BOT_GROUP_ID,
+					self::STATUS_ACTIVE
+				]) ?: [];
 			});
 			/**
 			 * For bots: login is user agent, email is IP
@@ -198,7 +232,7 @@ class User extends Accessor {
 				/**
 				 * Load data
 				 */
-				if (($this->id = $Cache->{"users/$bot_hash"}) === false) {
+				if (($this->id = $Cache->$bot_hash) === false) {
 					/**
 					 * If no data - try to find bot in list of known bots
 					 */
@@ -229,7 +263,7 @@ class User extends Accessor {
 					 * If found id - this is bot
 					 */
 					if ($this->id) {
-						$Cache->{"users/$bot_hash"}	= $this->id;
+						$Cache->$bot_hash	= $this->id;
 						/**
 						 * Searching for last bot session, if exists - load it, otherwise create new one
 						 */
@@ -238,7 +272,7 @@ class User extends Accessor {
 						if ($last_session) {
 							$this->get_session_user($last_session);
 						}
-						if (!$last_session || $this->id == 1) {
+						if (!$last_session || $this->id == self::GUEST_ID) {
 							$this->add_session($id);
 							$this->set_data('last_session', $this->get_session());
 						}
@@ -249,43 +283,30 @@ class User extends Accessor {
 			unset($bots, $bot_hash);
 		}
 		if (!$this->id) {
-			$this->add_session($this->id = 1);
+			$this->id	= self::GUEST_ID;
+			/**
+			 * Do not create session for API request
+			 */
+			if (!API) {
+				$this->add_session();
+			}
 		}
 		$this->update_user_is();
 		/**
 		 * If not guest - apply some individual settings
 		 */
-		if ($this->id != 1) {
-			if ($this->timezone) {
+		if ($this->id != self::GUEST_ID) {
+			if ($this->timezone && date_default_timezone_get() != $this->timezone) {
 				date_default_timezone_set($this->timezone);
 			}
-			if ($Config->core['multilingual'] && $this->language) {
+			if ($Config->core['multilingual']) {
 				Language::instance()->change($this->language);
-			}
-			if ($this->theme) {
-				$theme = _json_decode($this->theme);
-				if (
-					!is_array($theme) &&
-					$theme['theme'] &&
-					$theme['color_scheme'] &&
-					!_getcookie('theme') &&
-					!_getcookie('color_scheme')
-				) {
-					_setcookie('theme', $theme['theme']);
-					_setcookie('color_scheme', $theme['color_scheme']);
-				}
 			}
 		}
 		/**
 		 * Security check
 		 */
-		$session_id	= $this->get_session();
-		if (!$session_id || !isset($_REQUEST['session']) || $_REQUEST['session'] != $session_id) {
-			if (API) {
-				error_code(403);
-				Page::instance()->error('Invalid user session');
-				exit;
-			}
+		if (!isset($_REQUEST['session']) || $_REQUEST['session'] != $this->get_session()) {
 			$_REQUEST	= array_diff_key($_REQUEST, $_POST);
 			$_POST		= [];
 		}
@@ -301,23 +322,22 @@ class User extends Accessor {
 		$this->current['is']['user']	= false;
 		$this->current['is']['admin']	= false;
 		$this->current['is']['system']	= false;
-		if ($this->id == 1) {
+		if ($this->id == self::GUEST_ID) {
 			$this->current['is']['guest'] = true;
 		} else {
 			/**
 			 * Checking of user type
 			 */
-			$groups = $this->get_user_groups() ?: [];
-			if (in_array(1, $groups)) {
+			$groups = $this->get_groups() ?: [];
+			if (in_array(self::ADMIN_GROUP_ID, $groups)) {
 				$this->current['is']['admin']	= Config::instance()->can_be_admin;
 				$this->current['is']['user']	= true;
-			} elseif (in_array(2, $groups)) {
+			} elseif (in_array(self::USER_GROUP_ID, $groups)) {
 				$this->current['is']['user']	= true;
-			} elseif (in_array(3, $groups)) {
+			} elseif (in_array(self::BOT_GROUP_ID, $groups)) {
 				$this->current['is']['guest']	= true;
 				$this->current['is']['bot']		= true;
 			}
-			unset($groups);
 		}
 	}
 	/**
@@ -424,7 +444,7 @@ class User extends Accessor {
 			/**
 			 * Try to get data from the cache
 			 */
-			} elseif (!isset($new_data) && ($new_data = Cache::instance()->{"users/$user"}) !== false && is_array($new_data)) {
+			} elseif (!isset($new_data) && ($new_data = $this->cache->$user) !== false && is_array($new_data)) {
 				/**
 				 * Update the local cache
 				 */
@@ -486,17 +506,13 @@ class User extends Accessor {
 					$value	= $value ? $L->clanguage : '';
 				}
 			}
-			$this->update_cache[$user] = true;
-			$this->data[$user][$item] = $value;
-			if ($this->init) {
-				$this->data_set[$user][$item] = $this->data[$user][$item];
-			}
+			$this->update_cache[$user]		= true;
+			$this->data[$user][$item]		= $value;
+			$this->data_set[$user][$item]	= $value;
 			if ($item == 'login' || $item == 'email') {
-				$this->data[$user][$item.'_hash'] = $value;
-				if ($this->init) {
-					$this->data_set[$user][$item.'_hash'] = $this->data[$user][$item];
-				}
-				unset(Cache::instance()->{'users/'.hash('sha224', $this->$item)});
+				$this->data[$user][$item.'_hash']		= hash('sha224', $value);
+				$this->data_set[$user][$item.'_hash']	= hash('sha224', $value);
+				unset($this->cache->{hash('sha224', $this->$item)});
 			} elseif ($item == 'password_hash') {
 				$this->del_all_sessions($user);
 			}
@@ -534,11 +550,11 @@ class User extends Accessor {
 	 */
 	function get_data ($item, $user = false) {
 		$user	= (int)($user ?: $this->id);
-		if (!$user || $user == 1) {
+		if (!$user || $user == self::GUEST_ID) {
 			return false;
 		}
-		$Cache	= Cache::instance();
-		if (($data = $Cache->{"users/data/$user"}) === false || !isset($data[$item])) {
+		$Cache	= $this->cache;
+		if (($data = $Cache->{"data/$user"}) === false || !isset($data[$item])) {
 			if (!is_array($data)) {
 				$data	= [];
 			}
@@ -550,7 +566,7 @@ class User extends Accessor {
 					`item`	= '%s'",
 				$item
 			]);
-			$Cache->{"users/data/$user"}	= $data[$item];
+			$Cache->{"data/$user"}	= $data[$item];
 		}
 		return _json_decode($data[$item]);
 	}
@@ -565,7 +581,7 @@ class User extends Accessor {
 	 */
 	function set_data ($item, $value = null, $user = false) {
 		$user	= (int)($user ?: $this->id);
-		if (!$user || $user == 1) {
+		if (!$user || $user == self::GUEST_ID) {
 			return false;
 		}
 		$result	= $this->db()->q(
@@ -583,7 +599,7 @@ class User extends Accessor {
 			$item,
 			_json_encode($value)
 		);
-		unset(Cache::instance()->{'users/data/'.$user});
+		unset($this->cache->{"data/$user"});
 		return $result;
 	}
 	/**
@@ -596,7 +612,7 @@ class User extends Accessor {
 	 */
 	function del_data ($item, $user = false) {
 		$user	= (int)($user ?: $this->id);
-		if (!$user || $user == 1) {
+		if (!$user || $user == self::GUEST_ID) {
 			return false;
 		}
 		$result	= $this->db()->q(
@@ -606,16 +622,8 @@ class User extends Accessor {
 				`item`	= '%s'",
 			$item
 		);
-		unset(Cache::instance()->{'users/data/'.$user});
+		unset($this->cache->{"data/$user"});
 		return $result;
-	}
-	/**
-	 * Returns database index
-	 *
-	 * @return int
-	 */
-	protected function cdb () {
-		return Config::instance()->module('System')->db('users');
 	}
 	/**
 	 * Is admin
@@ -662,15 +670,14 @@ class User extends Accessor {
 	 *
 	 * @param  string $login_hash	Login or email hash
 	 *
-	 * @return bool|int
+	 * @return bool|int				User id if found and not guest, otherwise - boolean <i>false</i>
 	 */
 	function get_id ($login_hash) {
 		if (!preg_match('/^[0-9a-z]{56}$/', $login_hash)) {
 			return false;
 		}
-		$Cache	= Cache::instance();
-		if (($id = $Cache->{"users/$login_hash"}) === false) {
-			$Cache->{"users/$login_hash"} = $id = $this->db()->qfs([
+		$id	= $this->cache->get($login_hash, function () use ($login_hash) {
+			return $this->db()->qfs([
 				"SELECT `id`
 				FROM `[prefix]users`
 				WHERE
@@ -678,9 +685,9 @@ class User extends Accessor {
 					`email_hash`	= '%1\$s'
 				LIMIT 1",
 				$login_hash
-			]);
-		}
-		return $id && $id != 1 ? $id : false;
+			]) ?: false;
+		});
+		return $id && $id != self::GUEST_ID ? $id : false;
 	}
 	/**
 	 * Get user avatar, if no one present - uses Gravatar
@@ -693,7 +700,7 @@ class User extends Accessor {
 	function avatar ($size = null, $user = false) {
 		$user	= (int)($user ?: $this->id);
 		$avatar	= $this->get('avatar', $user);
-		if (!$avatar && $this->id != 1) {
+		if (!$avatar && $this->id != self::GUEST_ID) {
 			$avatar	= 'https://www.gravatar.com/avatar/'.md5($this->get('email', $user))."?d=mm&s=$size";
 			$avatar	.= '&d='.urlencode(Config::instance()->base_url().'/includes/img/guest.gif');
 		}
@@ -731,8 +738,9 @@ class User extends Accessor {
 					`username`	LIKE '%1\$s' OR
 					`email`		LIKE '%1\$s'
 				) AND
-				`status` != '-1'",
-			$search_phrase
+				`status` != '%s'",
+			$search_phrase,
+			self::STATUS_NOT_ACTIVATED
 		]);
 		return $found_users;
 	}
@@ -748,36 +756,35 @@ class User extends Accessor {
 	 * @return bool				If permission exists - returns its state for specified user, otherwise for admin permissions returns <b>false</b> and for
 	 * 							others <b>true</b>
 	 */
-	function get_user_permission ($group, $label, $user = false) {
-		$user = (int)($user ?: $this->id);
-		if ($this->system() || $user == 2) {
+	function get_permission ($group, $label, $user = false) {
+		$user			= (int)($user ?: $this->id);
+		if ($this->system() || $user == self::ROOT_ID) {
 			return true;
 		}
 		if (!$user) {
 			return false;
 		}
-		if (!isset($this->data[$user])) {
-			$this->data[$user] = [];
-		}
-		if (!isset($this->data[$user]['permissions'])) {
-			$this->data[$user]['permissions']	= [];
-			$permissions						= &$this->data[$user]['permissions'];
-			if ($user != 1) {
-				$groups							= $this->get_user_groups($user);
-				if (is_array($groups)) {
-					foreach ($groups as $group_id) {
-						$permissions = array_merge($permissions ?: [], $this->get_group_permissions($group_id) ?: []);
+		if (!isset($this->permissions[$user])) {
+			$this->permissions[$user]	= $this->cache->get("permissions/$user", function () use ($user) {
+				$permissions	= [];
+				if ($user != self::GUEST_ID) {
+					$groups							= $this->get_groups($user);
+					if (is_array($groups)) {
+						$Group	= Group::instance();
+						foreach ($groups as $group_id) {
+							$permissions = array_merge($permissions ?: [], $Group->get_permissions($group_id) ?: []);
+						}
 					}
+					unset($groups, $group_id);
 				}
-				unset($groups, $group_id);
-			}
-			$permissions						= array_merge($permissions ?: [], $this->get_user_permissions($user) ?: []);
-			unset($permissions);
+				return array_merge($permissions ?: [], $this->get_permissions($user) ?: []);
+			});
 		}
-		if (isset($this->get_permissions_table()[$group], $this->get_permissions_table()[$group][$label])) {
-			$permission = $this->get_permissions_table()[$group][$label];
-			if (isset($this->data[$user]['permissions'][$permission])) {
-				return (bool)$this->data[$user]['permissions'][$permission];
+		$all_permission	= Cache::instance()->{'permissions/all'} ?: Permission::instance()->get_all();
+		if (isset($all_permission[$group], $all_permission[$group][$label])) {
+			$permission	= $all_permission[$group][$label];
+			if (isset($this->permissions[$user][$permission])) {
+				return (bool)$this->permissions[$user][$permission];
 			} else {
 				return $this->admin() ? true : strpos($group, 'admin/') !== 0;
 			}
@@ -795,9 +802,9 @@ class User extends Accessor {
 	 *
 	 * @return bool
 	 */
-	function set_user_permission ($group, $label, $value, $user = false) {
+	function set_permission ($group, $label, $value, $user = false) {
 		if ($permission = $this->get_permission(null, $group, $label)) {
-			return $this->set_user_permissions(
+			return $this->set_permissions(
 				[
 					$permission['id']	=> $value
 				],
@@ -815,8 +822,8 @@ class User extends Accessor {
 	 *
 	 * @return bool
 	 */
-	function del_user_permission ($group, $label, $user = false) {
-		return $this->set_user_permission($group, $label, -1, $user);
+	function del_permission ($group, $label, $user = false) {
+		return $this->set_permission($group, $label, -1, $user);
 	}
 	/**
 	 * Get array of all permissions states for specified user
@@ -825,7 +832,7 @@ class User extends Accessor {
 	 *
 	 * @return array|bool
 	 */
-	function get_user_permissions ($user = false) {
+	function get_permissions ($user = false) {
 		$user = (int)($user ?: $this->id);
 		if (!$user) {
 			return false;
@@ -840,7 +847,7 @@ class User extends Accessor {
 	 *
 	 * @return bool
 	 */
-	function set_user_permissions ($data, $user = false) {
+	function set_permissions ($data, $user = false) {
 		$user = (int)($user ?: $this->id);
 		if (!$user) {
 			return false;
@@ -854,7 +861,7 @@ class User extends Accessor {
 	 *
 	 * @return bool
 	 */
-	function del_user_permissions_all ($user = false) {
+	function del_permissions_all ($user = false) {
 		$user = (int)($user ?: $this->id);
 		if (!$user) {
 			return false;
@@ -868,12 +875,12 @@ class User extends Accessor {
 	 *
 	 * @return array|bool
 	 */
-	function get_user_groups ($user = false) {
+	function get_groups ($user = false) {
 		$user	= (int)($user ?: $this->id);
-		if (!$user || $user == 1) {
+		if (!$user || $user == self::GUEST_ID) {
 			return false;
 		}
-		return Cache::instance()->get("users/groups/$user", function () use ($user) {
+		return $this->cache->get("groups/$user", function () use ($user) {
 			return $this->db()->qfas(
 				"SELECT `group`
 				FROM `[prefix]users_groups`
@@ -890,7 +897,7 @@ class User extends Accessor {
 	 *
 	 * @return bool
 	 */
-	function set_user_groups ($data, $user = false) {
+	function set_groups ($data, $user = false) {
 		$user		= (int)($user ?: $this->id);
 		if (!$user) {
 			return false;
@@ -903,7 +910,7 @@ class User extends Accessor {
 			}
 		}
 		unset($i, $group);
-		$exiting	= $this->get_user_groups($user);
+		$exiting	= $this->get_groups($user);
 		$return		= true;
 		$insert		= array_diff($data, $exiting);
 		$delete		= array_diff($exiting, $data);
@@ -947,576 +954,12 @@ class User extends Accessor {
 				LIMIT 1";
 		}
 		$return		= $return && $this->db_prime()->q($update);
-		$Cache		= Cache::instance();
+		$Cache		= $this->cache;
 		unset(
-			$Cache->{"users/groups/$user"},
-			$Cache->{"users/permissions/$user"}
+			$Cache->{"groups/$user"},
+			$Cache->{"permissions/$user"}
 		);
 		return $return;
-	}
-	/**
-	 * Add new group
-	 *
-	 * @param string $title
-	 * @param string $description
-	 *
-	 * @return bool|int
-	 */
-	function add_group ($title, $description) {
-		$title			= xap($title, false);
-		$description	= xap($description, false);
-		if (!$title || !$description) {
-			return false;
-		}
-		if ($this->db_prime()->q(
-			"INSERT INTO `[prefix]groups`
-				(
-					`title`,
-					`description`
-				) VALUES (
-					'%s',
-					'%s'
-				)",
-			$title,
-			$description
-		)) {
-			unset(Cache::instance()->{'groups/list'});
-			$id	= $this->db_prime()->id();
-			Trigger::instance()->run(
-				'System/User/add_group',
-				[
-					'id'	=> $id
-				]
-			);
-			return $id;
-		} else {
-			return false;
-		}
-	}
-	/**
-	 * Get group data
-	 *
-	 * @param int					$group
-	 * @param bool|string			$item	If <b>false</b> - array will be returned, if title|description|data - corresponding item
-	 *
-	 * @return array|bool|mixed
-	 */
-	function get_group ($group, $item = false) {
-		$Cache	= Cache::instance();
-		$group	= (int)$group;
-		if (!$group) {
-			return false;
-		}
-		$group_data = $Cache->get("groups/$group", function ($group) {
-			$group_data = $this->db()->qf(
-				"SELECT
-					`title`,
-					`description`,
-					`data`
-				FROM `[prefix]groups`
-				WHERE `id` = '$group'
-				LIMIT 1"
-			);
-			$group_data['data'] = _json_decode($group_data['data']);
-			return $group_data;
-		});
-		if ($item !== false) {
-			if (isset($group_data[$item])) {
-				return $group_data[$item];
-			} else {
-				return false;
-			}
-		} else {
-			return $group_data;
-		}
-	}
-	/**
-	 * Set group data
-	 *
-	 * @param array	$data	May contain items title|description|data
-	 * @param int	$group
-	 *
-	 * @return bool
-	 */
-	function set_group ($data, $group) {
-		$group = (int)$group;
-		if (!$group) {
-			return false;
-		}
-		$update = [];
-		if (isset($data['title'])) {
-			$update[] = '`title` = '.$this->db_prime()->s(xap($data['title'], false));
-		}
-		if (isset($data['description'])) {
-			$update[] = '`description` = '.$this->db_prime()->s(xap($data['description'], false));
-		}
-		if (isset($data['data'])) {
-			$update[] = '`data` = '.$this->db_prime()->s(_json_encode($data['data']));
-		}
-		$update	= implode(', ', $update);
-		if (!empty($update) && $this->db_prime()->q("UPDATE `[prefix]groups` SET $update WHERE `id` = '$group' LIMIT 1")) {
-			$Cache	= Cache::instance();
-			unset(
-				$Cache->{"groups/$group"},
-				$Cache->{'groups/list'}
-			);
-			return true;
-		} else {
-			return false;
-		}
-	}
-	/**
-	 * Delete group
-	 *
-	 * @param int	$group
-	 *
-	 * @return bool
-	 */
-	function del_group ($group) {
-		$group = (int)$group;
-		Trigger::instance()->run(
-			'System/User/del_group/before',
-			[
-				'id'	=> $group
-			]
-		);
-		if ($group != 1 && $group != 2 && $group != 3) {
-			$return	= $this->db_prime()->q([
-				"DELETE FROM `[prefix]groups` WHERE `id` = $group",
-				"DELETE FROM `[prefix]users_groups` WHERE `group` = $group",
-				"DELETE FROM `[prefix]groups_permissions` WHERE `id` = $group"
-			]);
-			$Cache	= Cache::instance();
-			unset(
-				$Cache->{"users/groups/$group"},
-				$Cache->{'users/permissions'},
-				$Cache->{"groups/$group"},
-				$Cache->{"groups/permissions/$group"},
-				$Cache->{'groups/list'}
-			);
-			Trigger::instance()->run(
-				'System/User/del_group/after',
-				[
-					'id'	=> $group
-				]
-			);
-			return (bool)$return;
-		} else {
-			return false;
-		}
-	}
-	/**
-	 * Get list of all groups
-	 *
-	 * @return array|bool		Every item in form of array('id' => <i>id</i>, 'title' => <i>title</i>, 'description' => <i>description</i>)
-	 */
-	function get_groups_list () {
-		return Cache::instance()->get('groups/list', function () {
-			return $this->db()->qfa(
-				"SELECT
-					`id`,
-					`title`,
-					`description`
-				FROM `[prefix]groups`"
-			);
-		});
-	}
-	/**
-	 * Get group permissions
-	 *
-	 * @param int		$group
-	 *
-	 * @return array
-	 */
-	function get_group_permissions ($group) {
-		return $this->get_any_permissions($group, 'group');
-	}
-	/**
-	 * Set group permissions
-	 *
-	 * @param array	$data
-	 * @param int	$group
-	 *
-	 * @return bool
-	 */
-	function set_group_permissions ($data, $group) {
-		return $this->set_any_permissions($data, (int)$group, 'group');
-	}
-	/**
-	 * Delete all permissions of specified group
-	 *
-	 * @param int	$group
-	 *
-	 * @return bool
-	 */
-	function del_group_permissions_all ($group) {
-		return $this->del_any_permissions_all((int)$group, 'group');
-	}
-	/**
-	 * Common function for get_user_permissions() and get_group_permissions() because of their similarity
-	 *
-	 * @param int			$id
-	 * @param string		$type
-	 *
-	 * @return array|bool
-	 */
-	protected function get_any_permissions ($id, $type) {
-		if (!($id = (int)$id)) {
-			return false;
-		}
-		switch ($type) {
-			case 'user':
-				$table	= '[prefix]users_permissions';
-				$path	= 'users/permissions/';
-				break;
-			case 'group':
-				$table	= '[prefix]group_permissions';
-				$path	= 'groups/permissions/';
-				break;
-			default:
-				return false;
-		}
-		$Cache	= Cache::instance();
-		return $Cache->get($path.$id, function () use ($id, $table) {
-			$permissions	= false;
-			if ($permissions_array = $this->db()->qfa(
-				"SELECT
-					`permission`,
-					`value`
-				FROM `$table`
-				WHERE `id` = '$id'"
-			)) {
-				$permissions = [];
-				foreach ($permissions_array as $permission) {
-					$permissions[$permission['permission']] = (int)(bool)$permission['value'];
-				}
-			}
-			return $permissions;
-		});
-	}
-	/**
-	 * Common function for set_user_permissions() and set_group_permissions() because of their similarity
-	 *
-	 * @param array	$data
-	 * @param int		$id
-	 * @param string	$type
-	 *
-	 * @return bool
-	 */
-	protected function set_any_permissions ($data, $id, $type) {
-		$id		= (int)$id;
-		if (!is_array($data) || empty($data) || !$id) {
-			return false;
-		}
-		switch ($type) {
-			case 'user':
-				$table	= '[prefix]users_permissions';
-				$path	= 'users/permissions/';
-				break;
-			case 'group':
-				$table	= '[prefix]groups_permissions';
-				$path	= 'groups/permissions/';
-				break;
-			default:
-				return false;
-		}
-		$delete	= [];
-		foreach ($data as $i => $val) {
-			if ($val == -1) {
-				$delete[] = (int)$i;
-				unset($data[$i]);
-			}
-		}
-		unset($i, $val);
-		$return	= true;
-		if (!empty($delete)) {
-			$delete	= implode(', ', $delete);
-			$return	= $this->db_prime()->q(
-				"DELETE FROM `$table` WHERE `id` = '$id' AND `permission` IN ($delete)"
-			);
-		}
-		unset($delete);
-		if (!empty($data)) {
-			$exiting	= $this->get_any_permissions($id, $type);
-			if (!empty($exiting)) {
-				$update		= [];
-				foreach ($exiting as $permission => $value) {
-					if (isset($data[$permission]) && $data[$permission] != $value) {
-						$value		= (int)(bool)$data[$permission];
-						$update[]	=
-							"UPDATE `$table`
-							SET `value` = '$value'
-							WHERE
-								`permission`	= '$permission' AND
-								`id`			= '$id'";
-					}
-					unset($data[$permission]);
-				}
-				unset($exiting, $permission, $value);
-				if (!empty($update)) {
-					$return = $return && $this->db_prime()->q($update);
-				}
-				unset($update);
-			}
-			if (!empty($data)) {
-				$insert	= [];
-				foreach ($data as $permission => $value) {
-					$insert[] = $id.', '.(int)$permission.', '.(int)(bool)$value;
-				}
-				unset($data, $permission, $value);
-				if (!empty($insert)) {
-					$insert	= implode('), (', $insert);
-					$return	= $return && $this->db_prime()->q(
-						"INSERT INTO `$table`
-							(
-								`id`,
-								`permission`,
-								`value`
-							) VALUES (
-								$insert
-							)"
-					);
-				}
-			}
-		}
-		$Cache	= Cache::instance();
-		unset($Cache->{$path.$id});
-		if ($type == 'group') {
-			unset($Cache->{'users/permissions'});
-		}
-		return $return;
-	}
-	/**
-	 * Common function for del_user_permissions_all() and del_group_permissions_all() because of their similarity
-	 *
-	 * @param int		$id
-	 * @param string	$type
-	 *
-	 * @return bool
-	 */
-	protected function del_any_permissions_all ($id, $type) {
-		$id			= (int)$id;
-		if (!$id) {
-			return false;
-		}
-		switch ($type) {
-			case 'user':
-				$table	= '[prefix]users_permissions';
-				$path	= 'users/permissions/';
-			break;
-			case 'group':
-				$table	= '[prefix]groups_permissions';
-				$path	= 'groups/permissions/';
-			break;
-			default:
-				return false;
-		}
-		$return = $this->db_prime()->q("DELETE FROM `$table` WHERE `id` = '$id'");
-		if ($return) {
-			unset(Cache::instance()->{$path.$id});
-			return true;
-		}
-		return false;
-	}
-	/**
-	 * Returns array of all permissions grouped by permissions groups
-	 *
-	 * @return array	Format of array: ['group']['label'] = <i>permission_id</i>
-	 */
-	function get_permissions_table () {
-		if (empty($this->permissions_table)) {
-			$this->permissions_table = Cache::instance()->get('permissions_table', function () {
-				$permissions_table	= [];
-				$data				= $this->db()->qfa(
-					'SELECT
-						`id`,
-						`label`,
-						`group`
-					FROM `[prefix]permissions`'
-				);
-				foreach ($data as $item) {
-					if (!isset($permissions_table[$item['group']])) {
-						$permissions_table[$item['group']] = [];
-					}
-					$permissions_table[$item['group']][$item['label']] = $item['id'];
-				}
-				unset($data, $item);
-				return $permissions_table;
-			});
-		}
-		return $this->permissions_table;
-	}
-	/**
-	 * Deletion of permission table (is used after adding, setting or deletion of permission)
-	 */
-	protected function del_permission_table () {
-		$this->permissions_table = [];
-		unset(Cache::instance()->permissions_table);
-	}
-	/**
-	 * Add permission
-	 *
-	 * @param string	$group
-	 * @param string	$label
-	 *
-	 * @return bool|int			Group id or <b>false</b> on failure
-	 */
-	function add_permission ($group, $label) {
-		if ($this->db_prime()->q(
-			"INSERT INTO `[prefix]permissions`
-				(
-					`label`,
-					`group`
-				) VALUES (
-					'%s',
-					'%s'
-				)",
-			xap($label),
-			xap($group)
-		)) {
-			$this->del_permission_table();
-			return $this->db_prime()->id();
-		}
-		return false;
-	}
-	/**
-	 * Get permission data<br>
-	 * If <b>$group</b> or/and <b>$label</b> parameter is specified, <b>$id</b> is ignored.
-	 *
-	 * @param int|null		$id
-	 * @param null|string	$group
-	 * @param null|string	$label
-	 * @param string		$condition	and|or
-	 *
-	 * @return array|bool			If only <b>$id</b> specified - result is array of permission data,
-	 * 								in other cases result will be array of arrays of corresponding permissions data.
-	 */
-	function get_permission ($id = null, $group = null, $label = null, $condition = 'and') {
-		switch ($condition) {
-			case 'or':
-				$condition = 'OR';
-			break;
-			default:
-				$condition = 'AND';
-			break;
-		}
-		if ($group !== null && $group && $label !== null && $label) {
-			return $this->db()->qfa([
-				"SELECT
-					`id`,
-					`label`,
-					`group`
-				FROM `[prefix]permissions`
-				WHERE
-					`group` = '%s' $condition
-					`label` = '%s'",
-				$group,
-				$label
-			]);
-		} elseif ($group !== null && $group) {
-			return $this->db()->qfa([
-				"SELECT
-					`id`,
-					`label`,
-					`group`
-				FROM `[prefix]permissions`
-				WHERE `group` = '%s'",
-				$group
-			]);
-		} elseif ($label !== null && $label) {
-			return $this->db()->qfa([
-				"SELECT
-					`id`,
-					`label`,
-					`group`
-				FROM `[prefix]permissions`
-				WHERE `label` = '%s'",
-				$label
-			]);
-		} else {
-			$id		= (int)$id;
-			if (!$id) {
-				return false;
-			}
-			return $this->db()->qf(
-				"SELECT
-					`id`,
-					`label`,
-					`group`
-				FROM `[prefix]permissions`
-				WHERE `id` = '$id'
-				LIMIT 1"
-			);
-		}
-	}
-	/**
-	 * Set permission
-	 *
-	 * @param int		$id
-	 * @param string	$group
-	 * @param string	$label
-	 *
-	 * @return bool
-	 */
-	function set_permission ($id, $group, $label) {
-		$id		= (int)$id;
-		if (!$id) {
-			return false;
-		}
-		if ($this->db_prime()->q(
-			"UPDATE `[prefix]permissions`
-			SET
-				`label` = '%s',
-				`group` = '%s'
-			WHERE `id` = '$id'
-			LIMIT 1",
-			xap($label),
-			xap($group)
-		)) {
-			$this->del_permission_table();
-			return true;
-		} else {
-			return false;
-		}
-	}
-	/**
-	 * Deletion of permission or array of permissions
-	 *
-	 * @param int|int[]	$id
-	 *
-	 * @return bool
-	 */
-	function del_permission ($id) {
-		if (is_array($id) && !empty($id)) {
-			foreach ($id as &$item) {
-				$item = (int)$item;
-			}
-			$id = implode(',', $id);
-			return $this->db_prime()->q([
-				"DELETE FROM `[prefix]permissions` WHERE `id` IN ($id)",
-				"DELETE FROM `[prefix]users_permissions` WHERE `permission` IN ($id)",
-				"DELETE FROM `[prefix]groups_permissions` WHERE `permission` IN ($id)"
-			]);
-		}
-		$id		= (int)$id;
-		if (!$id) {
-			return false;
-		}
-		if ($this->db_prime()->q([
-			"DELETE FROM `[prefix]permissions` WHERE `id` = '$id' LIMIT 1",
-			"DELETE FROM `[prefix]users_permissions` WHERE `permission` = '$id'",
-			"DELETE FROM `[prefix]groups_permissions` WHERE `permission` = '$id'"
-		])) {
-			$Cache	= Cache::instance();
-			unset(
-				$Cache->{'users/permissions'},
-				$Cache->{'groups/permissions'}
-			);
-			$this->del_permission_table();
-			return true;
-		} else {
-			return false;
-		}
 	}
 	/**
 	 * Returns current session id
@@ -1524,21 +967,21 @@ class User extends Accessor {
 	 * @return bool|string
 	 */
 	function get_session () {
-		if ($this->bot() && $this->id == 1) {
+		if ($this->bot() && $this->id == self::GUEST_ID) {
 			return '';
 		}
 		return $this->current['session'];
 	}
 	/**
-	 * Find the session by id as applies it, and return id of owner (user), updates last_login, last_ip and last_online information
+	 * Find the session by id as applies it, and return id of owner (user), updates last_sign_in, last_ip and last_online information
 	 *
 	 * @param null|string	$session_id
 	 *
 	 * @return int						User id
 	 */
 	function get_session_user ($session_id = null) {
-		if ($this->bot() && $this->id == 1) {
-			return 1;
+		if ($this->bot() && $this->id == self::GUEST_ID) {
+			return self::GUEST_ID;
 		}
 		if (!$session_id) {
 			if (!$this->current['session']) {
@@ -1546,13 +989,13 @@ class User extends Accessor {
 			}
 			$session_id = $session_id ?: $this->current['session'];
 		}
-		if (!preg_match('/^[0-9a-z]{32}$/', $session_id)) {
+		if (!is_md5($session_id)) {
 			return false;
 		}
-		$Cache	= Cache::instance();
+		$Cache	= $this->cache;
 		$Config	= Config::instance();
 		$result	= false;
-		if ($session_id && !($result = $Cache->{'sessions/'.$session_id})) {
+		if ($session_id && !($result = $Cache->{"sessions/$session_id"})) {
 			$condition	= $Config->core['remember_user_ip'] ?
 				"AND
 				`ip`			= '".ip2hex($this->ip)."' AND
@@ -1580,21 +1023,18 @@ class User extends Accessor {
 			]);
 			unset($condition);
 			if ($result) {
-				$Cache->{'sessions/'.$session_id} = $result;
+				$Cache->{"sessions/$session_id"} = $result;
 			}
 		}
 		if (!(
 			$session_id &&
 			is_array($result) &&
 			$result['expire'] > TIME &&
-			(
-				$Cache->{'users/'.$result['user']} ||
-				$this->get('id', $result['user'])
-			)
+			$this->get('id', $result['user'])
 		)) {
-			$this->add_session(1);
+			$this->add_session(self::GUEST_ID);
 			$this->update_user_is();
-			return 1;
+			return self::GUEST_ID;
 		}
 		$update	= [];
 		/**
@@ -1602,7 +1042,7 @@ class User extends Accessor {
 		 */
 		if ($result['user'] != 0 && $this->get('last_online', $result['user']) < TIME - $Config->core['online_time'] * $Config->core['update_ratio'] / 100) {
 			/**
-			 * Updating last login time and ip
+			 * Updating last sign in time and ip
 			 */
 			$time	= TIME;
 			if ($this->get('last_online', $result['user']) < TIME - $Config->core['online_time']) {
@@ -1610,13 +1050,13 @@ class User extends Accessor {
 				$update[]	= "
 					UPDATE `[prefix]users`
 					SET
-						`last_login`	= $time,
+						`last_sign_in`	= $time,
 						`last_ip`		= '$ip',
 						`last_online`	= $time
 					WHERE `id` =$result[user]";
 				$this->set(
 					[
-						'last_login'	=> TIME,
+						'last_sign_in'	=> TIME,
 						'last_ip'		=> $ip,
 						'last_online'	=> TIME
 					],
@@ -1644,7 +1084,7 @@ class User extends Accessor {
 				SET `expire` = $result[expire]
 				WHERE `id` = '$session_id'
 				LIMIT 1";
-			$Cache->{'sessions/'.$session_id} = $result;
+			$Cache->{"sessions/$session_id"} = $result;
 		}
 		if (!empty($update)) {
 			$this->db_prime()->q($update);
@@ -1655,17 +1095,14 @@ class User extends Accessor {
 	/**
 	 * Create the session for the user with specified id
 	 *
-	 * @param int	$user
-	 * @param bool	$delete_current_session
+	 * @param bool|int	$user
+	 * @param bool		$delete_current_session
 	 *
 	 * @return bool
 	 */
-	function add_session ($user, $delete_current_session = true) {
-		$user = (int)$user;
-		if (!$user) {
-			$user = 1;
-		}
-		if ($delete_current_session && preg_match('/^[0-9a-z]{32}$/', $this->current['session'])) {
+	function add_session ($user = false, $delete_current_session = true) {
+		$user	= (int)$user ?: self::GUEST_ID;
+		if ($delete_current_session && is_md5($this->current['session'])) {
 			$this->del_session_internal(null, false);
 		}
 		/**
@@ -1673,7 +1110,7 @@ class User extends Accessor {
 		 * Return point, runs if user is blocked, inactive, or disabled
 		 */
 		getting_user_data:
-		$data		= $this->get(
+		$data	= $this->get(
 			[
 				'login',
 				'username',
@@ -1688,16 +1125,16 @@ class User extends Accessor {
 		if (is_array($data)) {
 			$L		= Language::instance();
 			$Page	= Page::instance();
-			if ($data['status'] != 1) {
+			if ($data['status'] != self::STATUS_ACTIVE) {
 				/**
 				 * If user is disabled
 				 */
-				if ($data['status'] == 0) {
+				if ($data['status'] == self::STATUS_INACTIVE) {
 					$Page->warning($L->your_account_disabled);
 					/**
 					 * Mark user as guest, load data again
 					 */
-					$user	= 1;
+					$user	= self::GUEST_ID;
 					goto getting_user_data;
 				/**
 				 * If user is not active
@@ -1707,7 +1144,7 @@ class User extends Accessor {
 					/**
 					 * Mark user as guest, load data again
 					 */
-					$user	= 1;
+					$user	= self::GUEST_ID;
 					goto getting_user_data;
 				}
 			/**
@@ -1718,14 +1155,14 @@ class User extends Accessor {
 				/**
 				 * Mark user as guest, load data again
 				 */
-				$user	= 1;
+				$user	= self::GUEST_ID;
 				goto getting_user_data;
 			}
-		} elseif ($this->id != 1) {
+		} elseif ($this->id != self::GUEST_ID) {
 			/**
 			 * If data was not loaded - mark user as guest, load data again
 			 */
-			$user	= 1;
+			$user	= self::GUEST_ID;
 			goto getting_user_data;
 		}
 		unset($data);
@@ -1766,19 +1203,21 @@ class User extends Accessor {
 				$hash,
 				$user,
 				TIME,
-				TIME + ($user != 1 || $Config->core['session_expire'] < 300 ? $Config->core['session_expire'] : 300),	//Many guests open only one page, so
-																														//create session only for 5 min
+				/**
+				 * Many guests open only one page, so create session only for 5 min
+				 */
+				TIME + ($user != self::GUEST_ID || $Config->core['session_expire'] < 300 ? $Config->core['session_expire'] : 300),
 				$this->user_agent,
 				$ip				= ip2hex($this->ip),
 				$forwarded_for	= ip2hex($this->forwarded_for),
 				$client_ip		= ip2hex($this->client_ip)
 			);
-			$time									= TIME;
-			if ($user != 1) {
-				$this->db_prime()->q("UPDATE `[prefix]users` SET `last_login` = $time, `last_online` = $time, `last_ip` = '$ip.' WHERE `id` ='$user'");
+			$time								= TIME;
+			if ($user != self::GUEST_ID) {
+				$this->db_prime()->q("UPDATE `[prefix]users` SET `last_sign_in` = $time, `last_online` = $time, `last_ip` = '$ip.' WHERE `id` ='$user'");
 			}
-			$this->current['session']				= $hash;
-			Cache::instance()->{"sessions/$hash"}	= [
+			$this->current['session']			= $hash;
+			$this->cache->{"sessions/$hash"}	= [
 				'user'			=> $user,
 				'expire'		=> TIME + $Config->core['session_expire'],
 				'user_agent'	=> $this->user_agent,
@@ -1787,7 +1226,7 @@ class User extends Accessor {
 				'client_ip'		=> $client_ip
 			];
 			_setcookie('session', $hash, TIME + $Config->core['session_expire']);
-			$this->id								= $this->get_session_user();
+			$this->id							= $this->get_session_user();
 			$this->update_user_is();
 			if (
 				($this->db()->qfs(
@@ -1831,23 +1270,20 @@ class User extends Accessor {
 	 */
 	protected function del_session_internal ($session_id = null, $create_guest_session = true) {
 		$session_id = $session_id ?: $this->current['session'];
-		if (!preg_match('/^[0-9a-z]{32}$/', $session_id)) {
+		if (!is_md5($session_id)) {
 			return false;
 		}
-		unset(Cache::instance()->{"sessions/$session_id"});
+		unset($this->cache->{"sessions/$session_id"});
 		$this->current['session'] = false;
 		_setcookie('session', '');
 		$result =  $this->db_prime()->q(
-			"UPDATE `[prefix]sessions`
-			SET
-				`expire`	= 0,
-				`data`		= ''
+			"DELETE FROM `[prefix]sessions`
 			WHERE `id` = '%s'
 			LIMIT 1",
 			$session_id
 		);
 		if ($create_guest_session) {
-			return $this->add_session(1);
+			return $this->add_session(self::GUEST_ID);
 		}
 		return $result;
 	}
@@ -1872,21 +1308,17 @@ class User extends Accessor {
 			WHERE `user` = '$user'"
 		);
 		if (is_array($sessions)) {
-			$delete = [];
 			foreach ($sessions as $session) {
-				$delete[] = 'sessions/'.$session;
+				unset($this->cache->{"sessions/$session"});
 			}
-			Cache::instance()->del($delete);
-			unset($delete, $sessions, $session);
+			unset($session);
+			$sessions	= implode(',', $sessions);
+			return $this->db_prime()->q(
+				"DELETE FROM `[prefix]sessions`
+				WHERE `id` IN($sessions)"
+			);
 		}
-		$result		= $this->db_prime()->q(
-			"UPDATE `[prefix]sessions`
-			SET
-				`expire`	= 0,
-				`data`		= ''
-			WHERE `user` = '$user'"
-		);
-		return $result;
+		return true;
 	}
 	/**
 	 * Get data, stored with session
@@ -1899,12 +1331,11 @@ class User extends Accessor {
 	 */
 	function get_session_data ($item, $session_id = null) {
 		$session_id	= $session_id ?: $this->current['session'];
-		if (!preg_match('/^[0-9a-z]{32}$/', $session_id)) {
+		if (!is_md5($session_id)) {
 			return false;
 		}
-		$Cache		= Cache::instance();
-		if (!($data = $Cache->{'sessions/data/'.$session_id})) {
-			$data									= _json_decode(
+		$data	= $this->cache->get("sessions/data/$session_id", function () use ($session_id) {
+			return _json_decode(
 				$this->db()->qfs([
 					"SELECT `data`
 					FROM `[prefix]sessions`
@@ -1912,9 +1343,8 @@ class User extends Accessor {
 					LIMIT 1",
 					$session_id
 				])
-			);
-			$Cache->{'sessions/data/'.$session_id}	= $data;
-		}
+			) ?: false;
+		}) ?: [];
 		return isset($data[$item]) ? $data[$item] : false;
 	}
 	/**
@@ -1928,13 +1358,12 @@ class User extends Accessor {
 	 *
 	 */
 	function set_session_data ($item, $value, $session_id = null) {
-		$session_id	= $session_id ?: $this->current['session'];
-		if (!preg_match('/^[0-9a-z]{32}$/', $session_id)) {
+		$session_id		= $session_id ?: $this->current['session'];
+		if (!is_md5($session_id)) {
 			return false;
 		}
-		$Cache		= Cache::instance();
-		if (!($data = $Cache->{'sessions/data/'.$session_id})) {
-			$data									= _json_decode(
+		$data			= $this->cache->get("sessions/data/$session_id", function () use ($session_id) {
+			return _json_decode(
 				$this->db()->qfs([
 					"SELECT `data`
 					FROM `[prefix]sessions`
@@ -1942,11 +1371,8 @@ class User extends Accessor {
 					LIMIT 1",
 					$session_id
 				])
-			);
-		}
-		if (!$data) {
-			$data	= [];
-		}
+			) ?: false;
+		}) ?: [];
 		$data[$item]	= $value;
 		if ($this->db()->q(
 			"UPDATE `[prefix]sessions`
@@ -1956,7 +1382,7 @@ class User extends Accessor {
 			_json_encode($data),
 			$session_id
 		)) {
-			unset($Cache->{'sessions/data/'.$session_id});
+			unset($this->cache->{"sessions/data/$session_id"});
 			return true;
 		}
 		return false;
@@ -1972,12 +1398,11 @@ class User extends Accessor {
 	 */
 	function del_session_data ($item, $session_id = null) {
 		$session_id	= $session_id ?: $this->current['session'];
-		if (!preg_match('/^[0-9a-z]{32}$/', $session_id)) {
+		if (!is_md5($session_id)) {
 			return false;
 		}
-		$Cache		= Cache::instance();
-		if (!($data = $Cache->{'sessions/data/'.$session_id})) {
-			$data									= _json_decode(
+		$data		= $this->cache->get("sessions/data/$session_id", function () use ($session_id) {
+			return _json_decode(
 				$this->db()->qfs([
 					"SELECT `data`
 					FROM `[prefix]sessions`
@@ -1985,8 +1410,8 @@ class User extends Accessor {
 					LIMIT 1",
 					$session_id
 				])
-			);
-		}
+			) ?: false;
+		}) ?: [];
 		if (!isset($data[$item])) {
 			return true;
 		}
@@ -1999,58 +1424,52 @@ class User extends Accessor {
 			_json_encode($data),
 			$session_id
 		)) {
-			unset($Cache->{'sessions/data/'.$session_id});
+			unset($this->cache->{"sessions/data/$session_id"});
 			return true;
 		}
 		return false;
 	}
 	/**
-	 * Check number of login attempts (is used by system)
+	 * Check number of sign in attempts (is used by system)
 	 *
 	 * @param bool|string	$login_hash	Hash (sha224) from login (hash from lowercase string)
 	 *
 	 * @return int						Number of attempts
 	 */
-	function login_attempts ($login_hash = false) {
+	function get_sign_in_attempts_count ($login_hash = false) {
 		$login_hash = $login_hash ?: (isset($_POST['login']) ? $_POST['login'] : false);
 		if (!preg_match('/^[0-9a-z]{56}$/', $login_hash)) {
 			return false;
 		}
-		if (isset($this->cache['login_attempts'][$login_hash])) {
-			return $this->cache['login_attempts'][$login_hash];
-		}
 		$time	= TIME;
-		$ip		= ip2hex($this->ip);
-		$count	= $this->db()->qfs([
+		return $this->db()->qfs([
 			"SELECT COUNT(`expire`)
-			FROM `[prefix]logins`
+			FROM `[prefix]sign_ins`
 			WHERE
 				`expire` > $time AND
 				(
 					`login_hash` = '%s' OR `ip` = '%s'
 				)",
 			$login_hash,
-			$ip
+			ip2hex($this->ip)
 		]);
-		return $count ? $this->cache['login_attempts'][$login_hash] = $count : 0;
 	}
 	/**
-	 * Process login result (is used by system)
+	 * Process sign in result (is used by system)
 	 *
-	 * @param bool			$result
+	 * @param bool $success
 	 * @param bool|string	$login_hash	Hash (sha224) from login (hash from lowercase string)
 	 */
-	function login_result ($result, $login_hash = false) {
+	function sign_in_result ($success, $login_hash = false) {
 		$login_hash = $login_hash ?: (isset($_POST['login']) ? $_POST['login'] : false);
 		if (!preg_match('/^[0-9a-z]{56}$/', $login_hash)) {
 			return;
 		}
 		$ip	= ip2hex($this->ip);
 		$time	= TIME;
-		if ($result) {
+		if ($success) {
 			$this->db_prime()->q(
-				"UPDATE `[prefix]logins`
-				SET `expire` = 0
+				"DELETE FROM `[prefix]sign_ins`
 				WHERE
 					`expire` > $time AND
 					(
@@ -2062,7 +1481,7 @@ class User extends Accessor {
 		} else {
 			$Config	= Config::instance();
 			$this->db_prime()->q(
-				"INSERT INTO `[prefix]logins`
+				"INSERT INTO `[prefix]sign_ins`
 					(
 						`expire`,
 						`login_hash`,
@@ -2072,15 +1491,12 @@ class User extends Accessor {
 						'%s',
 						'%s'
 					)",
-				TIME + $Config->core['login_attempts_block_time'],
+				TIME + $Config->core['sign_in_attempts_block_time'],
 				$login_hash,
 				$ip
 			);
-			if (isset($this->cache['login_attempts'][$login_hash])) {
-				++$this->cache['login_attempts'][$login_hash];
-			}
 			if ($this->db_prime()->id() % $Config->core['inserts_limit'] == 0) {
-				$this->db_prime()->aq("DELETE FROM `[prefix]logins` WHERE `expire` < $time");
+				$this->db_prime()->aq("DELETE FROM `[prefix]sign_ins` WHERE `expire` < $time");
 			}
 		}
 	}
@@ -2091,7 +1507,7 @@ class User extends Accessor {
 	 * @param bool					$confirmation	If <b>true</b> - default system option is used, if <b>false</b> - registration will be
 	 *												finished without necessity of confirmation, independently from default system option
 	 *												(is used for manual registration).
-	 * @param bool					$autologin		If <b>false</b> - no autologin, if <b>true</b> - according to system configuration
+	 * @param bool					$auto_sign_in	If <b>false</b> - no auto sign in, if <b>true</b> - according to system configuration
 	 *
 	 * @return array|bool|string					<b>exists</b>	- if user with such email is already registered<br>
 	 * 												<b>error</b>	- if error occurred<br>
@@ -2103,7 +1519,7 @@ class User extends Accessor {
 	 * 												&nbsp;<b>'id'		=> *</b>	//Id of registered user in DB<br>
 	 * 												<b>)</b>
 	 */
-	function registration ($email, $confirmation = true, $autologin = true) {
+	function registration ($email, $confirmation = true, $auto_sign_in = true) {
 		$email			= mb_strtolower($email);
 		if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
 			return false;
@@ -2172,22 +1588,10 @@ class User extends Accessor {
 		)) {
 			$this->reg_id = $this->db_prime()->id();
 			if (!$confirmation) {
-				$this->set_user_groups([2], $this->reg_id);
+				$this->set_groups([self::USER_GROUP_ID], $this->reg_id);
 			}
-			if (!$confirmation && $autologin && $Config->core['autologin_after_registration']) {
+			if (!$confirmation && $auto_sign_in && $Config->core['auto_sign_in_after_registration']) {
 				$this->add_session($this->reg_id);
-			}
-			if ($this->reg_id % $Config->core['inserts_limit'] == 0) {
-				$this->db_prime()->aq(
-					"DELETE FROM `[prefix]users`
-					WHERE
-						`login_hash`	= '' AND
-						`email_hash`	= '' AND
-						`password_hash`	= '' AND
-						`status`		= '-1' AND
-						`id`			!= 1 AND
-						`id`			!= 2"
-				);
 			}
 			if (!Trigger::instance()->run(
 				'System/User/registration/after',
@@ -2199,9 +1603,9 @@ class User extends Accessor {
 				return false;
 			}
 			if (!$confirmation) {
-				$this->set_user_groups([2], $this->reg_id);
+				$this->set_groups([self::USER_GROUP_ID], $this->reg_id);
 			}
-			unset(Cache::instance()->{"users/$login_hash"});
+			unset($this->cache->$login_hash);
 			return [
 				'reg_key'	=> !$confirmation ? true : $reg_key,
 				'password'	=> $password,
@@ -2219,7 +1623,7 @@ class User extends Accessor {
 	 * @return array|bool				array('id' => <i>id</i>, 'email' => <i>email</i>, 'password' => <i>password</i>) or <b>false</b> on failure
 	 */
 	function registration_confirmation ($reg_key) {
-		if (!preg_match('/^[0-9a-z]{32}$/', $reg_key)) {
+		if (!is_md5($reg_key)) {
 			return false;
 		}
 		if (!Trigger::instance()->run(
@@ -2232,17 +1636,19 @@ class User extends Accessor {
 			return false;
 		}
 		$this->delete_unconfirmed_users();
-		$data			= $this->db_prime()->qf(
+		$data			= $this->db_prime()->qf([
 			"SELECT
 				`id`,
 				`login_hash`,
 				`email`
 			FROM `[prefix]users`
 			WHERE
-				`reg_key`	= '$reg_key' AND
-				`status`	= '-1'
-			LIMIT 1"
-		);
+				`reg_key`	= '%s' AND
+				`status`	= '%s'
+			LIMIT 1",
+			$reg_key,
+			self::STATUS_NOT_ACTIVATED
+		]);
 		if (!$data) {
 			return false;
 		}
@@ -2252,12 +1658,12 @@ class User extends Accessor {
 		$this->set(
 			[
 				'password_hash'	=> hash('sha512', hash('sha512', $password).Core::instance()->public_key),
-				'status'		=> 1
+				'status'		=> self::STATUS_ACTIVE
 			],
 			null,
 			$this->reg_id
 		);
-		$this->set_user_groups([2], $this->reg_id);
+		$this->set_groups([self::USER_GROUP_ID], $this->reg_id);
 		$this->add_session($this->reg_id);
 		if (!Trigger::instance()->run(
 			'System/User/registration/confirmation/after',
@@ -2268,7 +1674,7 @@ class User extends Accessor {
 			$this->registration_cancel();
 			return false;
 		}
-		unset(Cache::instance()->{"users/$data[login_hash]"});
+		unset($this->cache->{$data['login_hash']});
 		return [
 			'id'		=> $this->reg_id,
 			'email'		=> $data['email'],
@@ -2282,7 +1688,7 @@ class User extends Accessor {
 		if ($this->reg_id == 0) {
 			return;
 		}
-		$this->add_session(1);
+		$this->add_session(self::GUEST_ID);
 		$this->del_user($this->reg_id);
 		$this->reg_id = 0;
 	}
@@ -2291,14 +1697,15 @@ class User extends Accessor {
 	 */
 	protected function delete_unconfirmed_users () {
 		$reg_date		= TIME - Config::instance()->core['registration_confirmation_time'] * 86400;	//1 day = 86400 seconds
-		$ids			= $this->db_prime()->qfas(
+		$ids			= $this->db_prime()->qfas([
 			"SELECT `id`
 			FROM `[prefix]users`
 			WHERE
-				`last_login`	= 0 AND
-				`status`		= '-1' AND
-				`reg_date`		< $reg_date"
-		);
+				`last_sign_in`	= 0 AND
+				`status`		= '%s' AND
+				`reg_date`		< $reg_date",
+			self::STATUS_NOT_ACTIVATED
+		]);
 		$this->del_user($ids);
 
 	}
@@ -2310,7 +1717,7 @@ class User extends Accessor {
 	 * @return bool|string			Key for confirmation or <b>false</b> on failure
 	 */
 	function restore_password ($user) {
-		if ($user && $user != 1) {
+		if ($user && $user != self::GUEST_ID) {
 			$reg_key		= md5(MICROTIME.$this->ip);
 			if ($this->set('reg_key', $reg_key, $user)) {
 				$data					= $this->get('data', $user);
@@ -2330,7 +1737,7 @@ class User extends Accessor {
 	 * @return array|bool			array('id' => <i>id</i>, 'password' => <i>password</i>) or <b>false</b> on failure
 	 */
 	function restore_password_confirmation ($key) {
-		if (!preg_match('/^[0-9a-z]{32}$/', $key)) {
+		if (!is_md5($key)) {
 			return false;
 		}
 		$id			= $this->db_prime()->qfs([
@@ -2338,9 +1745,10 @@ class User extends Accessor {
 			FROM `[prefix]users`
 			WHERE
 				`reg_key`	= '%s' AND
-				`status`	= '1'
+				`status`	= '%s'
 			LIMIT 1",
-			$key
+			$key,
+			self::STATUS_ACTIVE
 		]);
 		if (!$id) {
 			return false;
@@ -2385,9 +1793,9 @@ class User extends Accessor {
 	 * @param bool		$update
 	 */
 	protected function del_user_internal ($user, $update = true) {
-		$Cache	= Cache::instance();
+		$Cache	= $this->cache;
 		Trigger::instance()->run(
-			'System/User/del_user/before',
+			'System/User/del/before',
 			[
 				'id'	=> $user
 			]
@@ -2398,53 +1806,30 @@ class User extends Accessor {
 			}
 			$user = implode(',', $user);
 			$this->db_prime()->q(
-				"UPDATE `[prefix]users`
-				SET
-					`login`			= null,
-					`login_hash`	= null,
-					`username`		= 'deleted',
-					`password_hash`	= null,
-					`email`			= null,
-					`email_hash`	= null,
-					`reg_date`		= 0,
-					`reg_ip`		= null,
-					`reg_key`		= null,
-					`status`		= '-1',
-					`data`			= ''
+				"DELETE FROM `[prefix]users`
 				WHERE `id` IN ($user)"
 			);
-			unset($Cache->users);
+			unset($Cache->{'/'});
 			return;
 		}
 		$user = (int)$user;
 		if (!$user) {
 			return;
 		}
-		$this->set_user_groups([], $user);
-		$this->del_user_permissions_all($user);
+		$this->set_groups([], $user);
+		$this->del_permissions_all($user);
 		if ($update) {
 			unset(
-				$Cache->{'users/'.hash('sha224', $this->get('login', $user))},
-				$Cache->{"users/$user"}
+				$Cache->{hash('sha224', $this->get('login', $user))},
+				$Cache->$user
 			);
 			$this->db_prime()->q(
-				"UPDATE `[prefix]users`
-				SET
-					`login`			= null,
-					`login_hash`	= null,
-					`username`		= 'deleted',
-					`password_hash`	= null,
-					`email`			= null,
-					`email_hash`	= null,
-					`reg_date`		= 0,
-					`reg_ip`		= null,
-					`reg_key`		= null,
-					`status`		= '-1'
+				"DELETE FROM `[prefix]users`
 				WHERE `id` = $user
 				LIMIT 1"
 			);
 			Trigger::instance()->run(
-				'System/User/del_user/after',
+				'System/User/del/after',
 				[
 					'id'	=> $user
 				]
@@ -2472,14 +1857,15 @@ class User extends Accessor {
 					'%s',
 					'%s',
 					'%s',
-					1
+					'%s'
 				)",
 			xap($name),
 			xap($user_agent),
-			xap($ip)
+			xap($ip),
+			self::STATUS_ACTIVE
 		)) {
 			$id	= $this->db_prime()->id();
-			$this->set_user_groups([3], $id);
+			$this->set_groups([self::BOT_GROUP_ID], $id);
 			Trigger::instance()->run(
 				'System/User/add_bot',
 				[
@@ -2511,7 +1897,7 @@ class User extends Accessor {
 			'',
 			$id
 		);
-		unset(Cache::instance()->{'users/bots'});
+		unset($this->cache->bots);
 		return $result;
 	}
 	/**
@@ -2521,7 +1907,7 @@ class User extends Accessor {
 	 */
 	function del_bot ($bot) {
 		$this->del_user($bot);
-		unset(Cache::instance()->{'users/bots'});
+		unset($this->cache->bots);
 	}
 	/**
 	 * Returns array of users columns, available for getting of data
@@ -2548,7 +1934,7 @@ class User extends Accessor {
 	 */
 	function get_contacts ($user = false) {
 		$user = (int)($user ?: $this->id);
-		if (!$user || $user == 1) {
+		if (!$user || $user == self::GUEST_ID) {
 			return [];
 		}
 		$contacts	= [];
@@ -2574,11 +1960,7 @@ class User extends Accessor {
 				$data = [];
 				foreach ($data_set as $i => &$val) {
 					if (in_array($i, $this->users_columns) && $i != 'id') {
-						if ($i == 'about') {
-							$val = xap($val, true);
-						} else {
-							$val = xap($val, false);
-						}
+						$val = xap($val, false);
 						$data[] = '`'.$i.'` = '.$this->db_prime()->s($val);
 					} elseif ($i != 'id') {
 						unset($data_set[$i]);
@@ -2603,7 +1985,7 @@ class User extends Accessor {
 		foreach ($this->data as $id => &$data) {
 			if (isset($this->update_cache[$id]) && $this->update_cache[$id]) {
 				$data['id'] = $id;
-				Cache::instance()->{"users/$id"} = $data;
+				$this->cache->$id = $data;
 			}
 		}
 		$this->update_cache = [];
