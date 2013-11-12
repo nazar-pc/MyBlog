@@ -74,11 +74,7 @@ class Posts {
 		 * Try to get item from cache, if not found - get it from database and save in cache
 		 */
 		return $this->cache->get("posts/$id", function () use ($id) {
-			$data = $this->read(
-				$this->table,
-				$this->data_model,
-				[$id]
-			);
+			$data = $this->read_simple($id);
 			if ($data) {
 				$L					= Language::instance();
 				$data['datetime']	= $L->to_locale(date($L->_datetime_long, $data['date']));
@@ -96,16 +92,12 @@ class Posts {
 	 * @return bool|int			Id of created post or <b>false</b> on failure
 	 */
 	function add ($title, $text) {
-		$id	= $this->create(
-			$this->table,
-			$this->data_model,
-			[
-				User::instance()->id,
-				$title,
-				$text,
-				TIME
-			]
-		);
+		$id	= $this->create_simple([
+			User::instance()->id,
+			$title,
+			$text,
+			TIME
+		]);
 		if ($id) {
 			/**
 			 * Delete total count of posts
@@ -128,7 +120,7 @@ class Posts {
 		$data			= $this->get($id);
 		$data['title']	= $title;
 		$data['text']	= $text;
-		if ($this->update($this->table, $this->data_model, $data)) {
+		if ($this->update_simple($data)) {
 			/**
 			 * Delete cached item if any
 			 */
@@ -145,7 +137,7 @@ class Posts {
 	 * @return bool
 	 */
 	function del ($id) {
-		if ($this->delete($this->table, $this->data_model, [$id])) {
+		if ($this->delete_simple($id)) {
 			/**
 			 * Delete cached item if any, and total count of posts
 			 */
